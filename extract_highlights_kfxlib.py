@@ -53,7 +53,7 @@ def extract_text(sections, start, end):
         sec_start = sec["position"]
         sec_end = sec_start + sec["length"]
         slice_start = max(start, sec_start)
-        slice_end = min(end, sec_end)
+        slice_end = min(end + 1, sec_end)
         if slice_end > slice_start:
             a = slice_start - sec_start
             b = slice_end - sec_start
@@ -113,7 +113,7 @@ def load_navigation(kfx_path):
     return pages, toc_items
 
 
-def generate_html(title, authors, highlights, output_path, year=""):
+def generate_html(title, authors, items, output_path, year=""):
     """Write highlights to an HTML file with simple Kindle Notebook styling."""
     style = """
         <style type="text/css">
@@ -207,7 +207,7 @@ def generate_html(title, authors, highlights, output_path, year=""):
     ]
 
     current_section = None
-    for item in highlights:
+    for item in items:
         if item.get("section") and item["section"] != current_section:
             html_parts.append(f"<div class='sectionHeading'>{escape(item['section'])}</div>")
             current_section = item["section"]
@@ -220,9 +220,12 @@ def generate_html(title, authors, highlights, output_path, year=""):
         meta_str = " - " + " >  ".join(meta_parts) if meta_parts else ""
 
         text = escape(item.get("text", ""))
-        html_parts.append(
-            f"<div class='noteHeading'>Highlight (<span class='highlight_yellow'>yellow</span>){meta_str}</div>"
-        )
+        if item.get("type") == "note":
+            html_parts.append(f"<div class='noteHeading'>Note{meta_str}</div>")
+        else:
+            html_parts.append(
+                f"<div class='noteHeading'>Highlight (<span class='highlight_yellow'>yellow</span>){meta_str}</div>"
+            )
         html_parts.append(f"<div class='noteText'>{text}</div>")
 
     html_parts.extend(["</div>", "</body>", "</html>"])
@@ -242,9 +245,11 @@ def main():
     with open(json_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    annotations = data.get("annotation.cache.object", {}).get("annotation.personal.highlight", [])
-    if not annotations:
-        print("No highlights found in annotation data.")
+    ann_obj = data.get("annotation.cache.object", {})
+    annotations = ann_obj.get("annotation.personal.highlight", [])
+    notes = ann_obj.get("annotation.personal.note", [])
+    if not annotations and not notes:
+        print("No highlights or notes found in annotation data.")
         return
 
     sections = load_content_sections(kfx_file)
@@ -278,6 +283,10 @@ def main():
                 chapter["label"] if chapter else None)
 
     highlights = []
+    notes_by_end = {}
+    for n in notes:
+        pos = int(n["startPosition"].split(":")[1])
+        notes_by_end.setdefault(pos, []).append(n["note"])
 
     annotations.sort(key=lambda a: int(a["startPosition"].split(":")[1]))
     print(f"Found {len(annotations)} highlights:\n{'='*60}")
@@ -296,7 +305,17 @@ def main():
             "page": page,
             "section": section,
             "chapter": chapter,
+            "type": "highlight",
         })
+        for note_text in notes_by_end.get(end, []):
+            highlights.append({
+                "creationTime": "",
+                "text": note_text,
+                "page": page,
+                "section": section,
+                "chapter": chapter,
+                "type": "note",
+            })
 
     output_html = Path(kfx_file).with_suffix(".highlights.html")
     year = ""
