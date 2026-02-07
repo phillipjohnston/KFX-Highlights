@@ -3,7 +3,8 @@
     "allow": [
       "Bash(.venv/bin/python:*)",
       "Bash(git commit:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(python3:*)"
     ]
   }
 }
