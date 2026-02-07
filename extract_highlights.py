@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
-"""Convert a YJR annotations file and extract highlights from a KFX book.
+"""Extract highlights and notes from Kindle KFX books using synced annotation data."""
 
-Usage:
-    Single pair:  python extract_highlights.py <book.kfx> <annotations.yjr>
-    Bulk mode:    python extract_highlights.py
-        (scans input/ for paired .kfx and .yjr files)
-"""
-
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -62,24 +57,50 @@ def find_pairs(input_dir):
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Extract highlights and notes from Kindle KFX books.",
+        epilog="""\
+examples:
+  %(prog)s                              Process all paired .kfx/.yjr files in input/
+  %(prog)s input/book.kfx input/book.yjr   Process a single book/annotation pair
+  %(prog)s -o results/ book.kfx book.yjr   Write output to a custom directory
+
+In bulk mode, .kfx and .yjr files are paired by filename: the .yjr name
+must start with the .kfx stem (Kindle's default naming convention).""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "kfx_file", nargs="?", type=Path, metavar="BOOK.kfx",
+        help="path to the KFX book file",
+    )
+    parser.add_argument(
+        "yjr_file", nargs="?", type=Path, metavar="ANNOTATIONS.yjr",
+        help="path to the YJR annotation file",
+    )
+    parser.add_argument(
+        "-o", "--output-dir", type=Path, default=None, metavar="DIR",
+        help="directory for output files (default: output/)",
+    )
+
+    args = parser.parse_args()
+
     script_dir = Path(__file__).parent
-    output_dir = script_dir / "output"
+    output_dir = args.output_dir or (script_dir / "output")
 
-    if len(sys.argv) == 3:
+    # If one positional arg is given without the other, that's an error
+    if (args.kfx_file is None) != (args.yjr_file is None):
+        parser.error("provide both BOOK.kfx and ANNOTATIONS.yjr, or neither for bulk mode")
+
+    if args.kfx_file and args.yjr_file:
         # Single-pair mode
-        kfx_file = Path(sys.argv[1])
-        yjr_file = Path(sys.argv[2])
+        if not args.kfx_file.is_file():
+            parser.error(f"KFX file not found: {args.kfx_file}")
+        if not args.yjr_file.is_file():
+            parser.error(f"YJR file not found: {args.yjr_file}")
 
-        if not kfx_file.is_file():
-            print(f"KFX file not found: {kfx_file}")
-            sys.exit(1)
-        if not yjr_file.is_file():
-            print(f"YJR file not found: {yjr_file}")
-            sys.exit(1)
+        process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir)
 
-        process_pair(kfx_file, yjr_file, script_dir, output_dir)
-
-    elif len(sys.argv) == 1:
+    else:
         # Bulk mode — scan input/ for paired files
         input_dir = script_dir / "input"
         if not input_dir.is_dir():
@@ -114,12 +135,6 @@ def main():
             for name in failed:
                 print(f"  - {name}")
             sys.exit(1)
-
-    else:
-        print("Usage:")
-        print("  Single pair:  python extract_highlights.py <book.kfx> <annotations.yjr>")
-        print("  Bulk mode:    python extract_highlights.py")
-        sys.exit(1)
 
 
 if __name__ == "__main__":
