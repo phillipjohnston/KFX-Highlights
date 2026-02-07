@@ -7,6 +7,7 @@ structure with content and position information and then maps the annotation
 positions directly onto that content.
 """
 import json
+import re
 import sys
 from pathlib import Path
 from html import escape
@@ -111,6 +112,22 @@ def load_navigation(kfx_path):
             toc_items = build_items(data.get("$247", []))
 
     return pages, toc_items
+
+
+def clean_title(raw_title):
+    """Strip Kindle filename noise (ISBNs, order IDs, email fragments) from a title."""
+    title = raw_title
+    # Remove ISBN-like sequences (10 or 13 digits, optionally with hyphens)
+    title = re.sub(r'\s*-?\s*\d{10,13}\b', '', title)
+    # Remove "Order -XXXX-..." patterns (Kindle order identifiers)
+    title = re.sub(r'\s*-?\s*Order\s*-[A-Za-z0-9-]+', '', title, flags=re.IGNORECASE)
+    # Remove email-like fragments (often mangled with dashes for dots)
+    title = re.sub(r'\s*-?\s*[A-Za-z0-9_.+-]+-[A-Za-z0-9-]+-(?:gmail|yahoo|hotmail|outlook|icloud|protonmail)-com-?\s*', '', title, flags=re.IGNORECASE)
+    # Remove trailing dashes and whitespace
+    title = re.sub(r'[\s-]+$', '', title)
+    # Remove leading dashes and whitespace
+    title = re.sub(r'^[\s-]+', '', title)
+    return title.strip() or raw_title
 
 
 def _format_citation_html(title, authors, year):
@@ -256,6 +273,8 @@ def main():
     parser.add_argument("--output-dir", help="Directory for output file (default: same as KFX file)")
     parser.add_argument("-q", "--quiet", action="store_true",
                         help="suppress per-highlight output (show summary only)")
+    parser.add_argument("--title", type=str, default=None,
+                        help="override the book title in the output")
     args = parser.parse_args()
 
     json_file = args.json_file
@@ -350,7 +369,10 @@ def main():
     year = ""
     if getattr(meta, "issue_date", None):
         year = str(meta.issue_date).split("-")[0]
-    title = meta.title or kfx_path.stem
+    if args.title:
+        title = args.title
+    else:
+        title = meta.title or clean_title(kfx_path.stem)
     authors = meta.authors or []
     generate_html(title, authors, highlights, output_html, year)
     n_highlights = sum(1 for h in highlights if h["type"] == "highlight")

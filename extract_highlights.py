@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 
-def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False):
+def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
+                 title=None):
     """Run the krds + extraction pipeline for a single kfx/yjr pair."""
     output_dir.mkdir(exist_ok=True)
 
@@ -23,6 +24,8 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False):
                    str(json_file), str(kfx_file), "--output-dir", str(output_dir)]
     if quiet:
         extract_cmd.append("--quiet")
+    if title:
+        extract_cmd.extend(["--title", title])
     subprocess.run(extract_cmd, check=True)
 
 
@@ -88,6 +91,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "-q", "--quiet", action="store_true",
         help="suppress per-highlight console output (show summary only)",
     )
+    parser.add_argument(
+        "--title", type=str, default=None,
+        help="override the book title in the output (single-pair mode only)",
+    )
 
     args = parser.parse_args()
 
@@ -106,7 +113,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             parser.error(f"YJR file not found: {args.yjr_file}")
 
         process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir,
-                     quiet=args.quiet)
+                     quiet=args.quiet, title=args.title)
 
     else:
         # Bulk mode — scan input/ for paired files
