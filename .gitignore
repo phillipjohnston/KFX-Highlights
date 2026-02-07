@@ -1,5 +1,6 @@
 input/
 output/
 config.yaml
+.sync_state.json
 .DS_Store
 __pycache__

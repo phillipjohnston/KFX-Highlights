@@ -25,3 +25,6 @@
 
 # Theme: default (only theme currently supported)
 # theme: default
+
+# Path to mounted Kindle device (e.g. /Volumes/Kindle)
+# kindle_path: /Volumes/Kindle

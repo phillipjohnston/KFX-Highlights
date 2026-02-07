@@ -12,9 +12,38 @@ Extracts highlights and notes from Kindle KFX books using synced annotation data
 2. Run the pipeline:
    - **Bulk mode** (all books): `python extract_highlights.py`
    - **Single book**: `python extract_highlights.py input/<book>.kfx input/<annotations>.yjr`
-3. Output HTML goes to `output/`
+   - **Kindle device mode**: `python extract_highlights.py --kindle /Volumes/Kindle`
+3. Output goes to `output/`
 
 Bulk mode automatically pairs `.kfx` and `.yjr` files by matching filenames (the `.yjr` filename starts with the `.kfx` stem).
+
+### Kindle device mode
+
+Connect a Kindle via USB and use `--kindle` to process directly from the device. The tool scans `documents/` and `documents/Downloads/` for `.kfx`/`.yjr` pairs.
+
+```
+# Default: process in-place from Kindle, output to output/
+python extract_highlights.py --kindle /Volumes/Kindle
+
+# Copy .kfx + .yjr to input/, don't extract
+python extract_highlights.py --kindle /Volumes/Kindle --import-only
+
+# Copy .kfx + .yjr to input/ AND run extraction
+python extract_highlights.py --kindle /Volumes/Kindle --import-book
+
+# Copy only .yjr to input/pending/ (for DRM books)
+python extract_highlights.py --kindle /Volumes/Kindle --import-metadata
+
+# Preview what would be done
+python extract_highlights.py --kindle /Volumes/Kindle --dry-run
+
+# Process only the first N books
+python extract_highlights.py --kindle /Volumes/Kindle --limit 5
+```
+
+Kindle mode uses incremental sync via `.sync_state.json` — unchanged, previously successful books are skipped automatically. The sync state also serves as a book registry, recording all known paths for each book.
+
+**DRM handling**: Books that fail with DRM errors are flagged separately. Use `--import-metadata` to copy just the `.yjr` annotations, then manually pair with an unlocked `.kfx` (e.g., from Calibre) in `input/`.
 
 ### Useful flags
 
@@ -25,10 +54,16 @@ Bulk mode automatically pairs `.kfx` and `.yjr` files by matching filenames (the
 - `--keep-json` — Keep intermediate JSON files (deleted by default after success)
 - `-j N` / `--jobs N` — Process N books in parallel (0 = CPU count, default: 1)
 - `-o DIR` — Write output to a custom directory
+- `--kindle PATH` — Path to mounted Kindle device
+- `--import-only` — Copy files from Kindle to input/ without extracting (requires `--kindle`)
+- `--import-book` — Copy files to input/ and extract (requires `--kindle`)
+- `--import-metadata` — Copy only .yjr to input/pending/ (requires `--kindle`)
+- `--dry-run` — Preview what would be done without making changes
+- `--limit N` — Process at most N books (works with both Kindle and bulk modes)
 
 ### Config file
 
-Copy `config.yaml.example` to `config.yaml` to set persistent defaults (output format, quiet mode, jobs, etc.). CLI flags always override config values. See the example file for all supported keys.
+Copy `config.yaml.example` to `config.yaml` to set persistent defaults (output format, quiet mode, jobs, etc.). CLI flags always override config values. See the example file for all supported keys. The `kindle_path` key provides a persistent default for the `--kindle` flag.
 
 ## Setup
 
@@ -54,5 +89,6 @@ Three scripts form a pipeline:
 ## File Conventions
 
 - Input files go in `input/`, output artifacts go in `output/` — both are gitignored.
+- `.sync_state.json` — Book registry / sync state for Kindle mode (gitignored). Records all known books with paths, mtimes, and processing status.
 - The `KFX Input.zip` is tracked via Git LFS (see `.gitattributes`).
 - `highlights.css` — External CSS for HTML output. Edit to customize styling (colors, fonts, dark mode).
