@@ -30,7 +30,7 @@ Improvement opportunities identified for the KFX highlight extraction pipeline.
 
 - [x] **Externalize CSS** — CSS moved to `highlights.css`, loaded and inlined at generation time. Easy to customize without editing Python.
 
-- [ ] **Config file support** — Persistent preferences via `config.yaml` (output format, citation style, theme, etc.) to reduce repeated CLI flags. *(new config loading in extract_highlights.py)*
+- [x] **Config file support** — Persistent preferences via `config.yaml` (output format, citation style, theme, etc.) to reduce repeated CLI flags. Copy `config.yaml.example` to `config.yaml` to customize.
 
 ## Lower Priority but Valuable
 

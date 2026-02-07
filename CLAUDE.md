@@ -26,6 +26,10 @@ Bulk mode automatically pairs `.kfx` and `.yjr` files by matching filenames (the
 - `-j N` / `--jobs N` — Process N books in parallel (0 = CPU count, default: 1)
 - `-o DIR` — Write output to a custom directory
 
+### Config file
+
+Copy `config.yaml.example` to `config.yaml` to set persistent defaults (output format, quiet mode, jobs, etc.). CLI flags always override config values. See the example file for all supported keys.
+
 ## Setup
 
 ```

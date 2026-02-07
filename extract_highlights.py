@@ -8,6 +8,75 @@ import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
+
+KNOWN_CONFIG_KEYS = {
+    "format": {"type": str, "choices": ["html", "md", "json", "csv"]},
+    "output_dir": {"type": str},
+    "quiet": {"type": bool},
+    "keep_json": {"type": bool},
+    "skip_existing": {"type": bool},
+    "jobs": {"type": int},
+    "citation_style": {"type": str, "choices": ["apa"]},
+    "theme": {"type": str, "choices": ["default"]},
+}
+
+
+def load_config(script_dir):
+    """Load config.yaml from the script directory.
+
+    Returns a dict of config values suitable for argparse set_defaults().
+    Returns an empty dict if the file is missing or PyYAML is not installed.
+    """
+    config_path = script_dir / "config.yaml"
+    if not config_path.is_file():
+        return {}
+
+    if not HAS_YAML:
+        print("Warning: config.yaml found but pyyaml is not installed — ignoring config file")
+        return {}
+
+    with open(config_path) as f:
+        raw = yaml.safe_load(f)
+
+    if not isinstance(raw, dict):
+        if raw is not None:
+            print("Warning: config.yaml is not a YAML mapping — ignoring")
+        return {}
+
+    defaults = {}
+    for key, value in raw.items():
+        if key not in KNOWN_CONFIG_KEYS:
+            print(f"Warning: unknown config key '{key}' — ignoring")
+            continue
+
+        spec = KNOWN_CONFIG_KEYS[key]
+        expected_type = spec["type"]
+
+        # Allow int where bool expected (YAML 1/0), but not the reverse
+        if expected_type is bool and not isinstance(value, bool):
+            print(f"Warning: config key '{key}' should be {expected_type.__name__}, "
+                  f"got {type(value).__name__} — ignoring")
+            continue
+        if not isinstance(value, expected_type):
+            print(f"Warning: config key '{key}' should be {expected_type.__name__}, "
+                  f"got {type(value).__name__} — ignoring")
+            continue
+
+        if "choices" in spec and value not in spec["choices"]:
+            print(f"Warning: config key '{key}' must be one of {spec['choices']}, "
+                  f"got '{value}' — ignoring")
+            continue
+
+        defaults[key] = value
+
+    return defaults
+
 
 def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
                  title=None, keep_json=False, fmt="html"):
@@ -114,9 +183,30 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         help="number of books to process in parallel (default: 1, 0 = CPU count)",
     )
 
+    script_dir = Path(__file__).parent
+    config = load_config(script_dir)
+
+    # Map config keys to argparse dest names and apply as defaults.
+    # CLI flags override these; argparse built-in defaults are lowest priority.
+    argparse_defaults = {}
+    for key, value in config.items():
+        if key == "output_dir":
+            argparse_defaults["output_dir"] = Path(value)
+        elif key == "format":
+            # argparse dest is "format" (from --format)
+            argparse_defaults["format"] = value
+        elif key in ("quiet", "keep_json", "skip_existing", "jobs"):
+            argparse_defaults[key] = value
+        # citation_style and theme are reserved for future use
+
+    if argparse_defaults:
+        parser.set_defaults(**argparse_defaults)
+
     args = parser.parse_args()
 
-    script_dir = Path(__file__).parent
+    if config and not args.quiet:
+        print(f"Loaded config from {script_dir / 'config.yaml'}")
+
     output_dir = args.output_dir or (script_dir / "output")
 
     # If one positional arg is given without the other, that's an error

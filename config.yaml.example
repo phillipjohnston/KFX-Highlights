@@ -1,0 +1,27 @@
+# KFX-Highlights configuration file
+# Copy to config.yaml and uncomment settings to override defaults.
+# CLI flags always take priority over values set here.
+
+# Output format: html, md, json, csv
+# format: html
+
+# Output directory (relative to project root or absolute)
+# output_dir: output
+
+# Suppress per-highlight console output
+# quiet: false
+
+# Keep intermediate JSON files
+# keep_json: false
+
+# Skip books whose output already exists (bulk mode)
+# skip_existing: false
+
+# Parallel workers (0 = CPU count, 1 = sequential)
+# jobs: 1
+
+# Citation style: apa (only style currently supported)
+# citation_style: apa
+
+# Theme: default (only theme currently supported)
+# theme: default

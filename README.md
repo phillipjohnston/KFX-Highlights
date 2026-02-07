@@ -16,7 +16,7 @@ Create a virtual environment and install the required dependencies:
 ```
 python3 -m venv .venv
 source .venv/bin/activate
-pip install pillow pypdf lxml beautifulsoup4
+pip install -r requirements.txt
 ```
 
 Activate the virtual environment before each use:
@@ -47,4 +47,26 @@ Both modes will:
 1. Convert the YJR file to JSON using `krds.py`.
 2. Call `extract_highlights_kfxlib.py` with the generated JSON and KFX file to create the HTML highlights file.
 
-Output HTML goes to `output/`.
+Output goes to `output/`.
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-f {html,md,json,csv}` | Output format (default: html) |
+| `-q` / `--quiet` | Suppress per-highlight output, show summary only |
+| `--skip-existing` | Skip books whose output file already exists (bulk mode) |
+| `--title "My Title"` | Override the book title in output (single-pair mode) |
+| `--keep-json` | Keep intermediate JSON files |
+| `-j N` / `--jobs N` | Parallel workers (0 = CPU count, default: 1) |
+| `-o DIR` | Write output to a custom directory |
+
+### Config file
+
+To avoid repeating the same flags on every run, copy the example config and edit it:
+
+```
+cp config.yaml.example config.yaml
+```
+
+All supported keys are listed with comments in the example file. CLI flags always override config values. The config file is gitignored since it contains user-specific preferences.
