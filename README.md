@@ -27,12 +27,24 @@ source .venv/bin/activate
 
 ## Usage
 
-To convert a `.yjr` annotations file and extract highlights from a `.kfx` book in one step run:
+### Bulk mode (all books at once)
+
+Place all `.kfx` and `.yjr` files in the `input/` directory, then run:
+
+```
+python extract_highlights.py
+```
+
+This scans `input/` and automatically pairs `.kfx` files with their corresponding `.yjr` annotation files by matching filenames. Each pair is processed sequentially, and failures are reported at the end without aborting the whole run.
+
+### Single book
 
 ```
 python extract_highlights.py <book.kfx> <annotations.yjr>
 ```
 
-This will:
+Both modes will:
 1. Convert the YJR file to JSON using `krds.py`.
 2. Call `extract_highlights_kfxlib.py` with the generated JSON and KFX file to create the HTML highlights file.
+
+Output HTML goes to `output/`.
