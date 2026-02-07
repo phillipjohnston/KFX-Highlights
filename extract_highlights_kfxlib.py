@@ -145,6 +145,39 @@ def _format_citation_html(title, authors, year):
     return f"<div class='citation'>Citation (APA): {citation}</div>"
 
 
+def _compute_stats(items):
+    """Compute summary statistics from a list of highlight/note items."""
+    n_highlights = sum(1 for i in items if i["type"] == "highlight")
+    n_notes = sum(1 for i in items if i["type"] == "note")
+    sections = {i["section"] for i in items if i.get("section")}
+    dates = [i["creationTime"] for i in items if i.get("creationTime")]
+    dates.sort()
+    return {
+        "highlights": n_highlights,
+        "notes": n_notes,
+        "sections": len(sections),
+        "first_date": dates[0].split("T")[0] if dates else None,
+        "last_date": dates[-1].split("T")[0] if dates else None,
+    }
+
+
+def _format_stats_line(stats):
+    """Format stats dict into a human-readable summary string."""
+    nh, nn = stats["highlights"], stats["notes"]
+    parts = [f"{nh} highlight{'s' if nh != 1 else ''}"]
+    if nn:
+        parts.append(f"{nn} note{'s' if nn != 1 else ''}")
+    if stats["sections"]:
+        ns = stats["sections"]
+        parts.append(f"{ns} section{'s' if ns != 1 else ''}")
+    if stats["first_date"] and stats["last_date"]:
+        if stats["first_date"] == stats["last_date"]:
+            parts.append(stats["first_date"])
+        else:
+            parts.append(f"{stats['first_date']} to {stats['last_date']}")
+    return " | ".join(parts)
+
+
 def generate_html(title, authors, items, output_path, year=""):
     """Write highlights to an HTML file with simple Kindle Notebook styling."""
     style = """
@@ -243,8 +276,11 @@ def generate_html(title, authors, items, output_path, year=""):
         f"<div class='bookTitle'>{escape(title)}</div>",
         f"<div class='authors'>{escape(', '.join(authors))}</div>",
         _format_citation_html(title, authors, year),
-        "<hr />",
     ]
+
+    stats_line = _format_stats_line(_compute_stats(items))
+    html_parts.append(f"<div class='authors'>{escape(stats_line)}</div>")
+    html_parts.append("<hr />")
 
     current_section = None
     for item in items:
@@ -300,6 +336,9 @@ def generate_markdown(title, authors, items, output_path, year=""):
         lines.append(f"**{', '.join(authors)}**")
         lines.append("")
     lines.append(f"Citation (APA): {_format_citation_text(title, authors, year)}")
+    lines.append("")
+
+    lines.append(_format_stats_line(_compute_stats(items)))
     lines.append("")
     lines.append("---")
     lines.append("")
