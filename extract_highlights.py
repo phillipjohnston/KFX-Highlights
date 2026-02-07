@@ -81,6 +81,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "-o", "--output-dir", type=Path, default=None, metavar="DIR",
         help="directory for output files (default: output/)",
     )
+    parser.add_argument(
+        "--skip-existing", action="store_true",
+        help="skip books whose output HTML already exists (bulk mode only)",
+    )
 
     args = parser.parse_args()
 
@@ -117,10 +121,19 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             print(f"  {kfx.name}")
 
         failed = []
+        skipped = []
         for i, (kfx, yjr) in enumerate(pairs, 1):
             print(f"\n{'='*60}")
             print(f"[{i}/{len(pairs)}] Processing: {kfx.stem}")
             print(f"{'='*60}")
+
+            if args.skip_existing:
+                output_html = output_dir / kfx.with_suffix(".highlights.html").name
+                if output_html.exists():
+                    print(f"  -> Skipped (output already exists)")
+                    skipped.append(kfx.name)
+                    continue
+
             try:
                 process_pair(kfx, yjr, script_dir, output_dir)
                 print(f"  -> Done")
@@ -129,7 +142,11 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                 failed.append(kfx.name)
 
         print(f"\n{'='*60}")
-        print(f"Processed {len(pairs) - len(failed)}/{len(pairs)} books successfully.")
+        processed = len(pairs) - len(failed) - len(skipped)
+        print(f"Processed {processed}/{len(pairs)} books successfully.", end="")
+        if skipped:
+            print(f" ({len(skipped)} skipped)", end="")
+        print()
         if failed:
             print(f"Failed:")
             for name in failed:
