@@ -113,6 +113,21 @@ def load_navigation(kfx_path):
     return pages, toc_items
 
 
+def _format_citation_html(title, authors, year):
+    """Build an APA citation div, gracefully omitting missing fields."""
+    parts = []
+    if authors and year:
+        parts.append(f"{escape(authors[0])} ({escape(year)}). ")
+    elif authors:
+        parts.append(f"{escape(authors[0])}. ")
+    elif year:
+        parts.append(f"({escape(year)}). ")
+    parts.append(f"<i>{escape(title)}</i>")
+    parts.append(" [Kindle version]. Retrieved from Amazon.com")
+    citation = "".join(parts)
+    return f"<div class='citation'>Citation (APA): {citation}</div>"
+
+
 def generate_html(title, authors, items, output_path, year=""):
     """Write highlights to an HTML file with simple Kindle Notebook styling."""
     style = """
@@ -198,11 +213,7 @@ def generate_html(title, authors, items, output_path, year=""):
         "<div class='notebookFor'>Notebook for</div>",
         f"<div class='bookTitle'>{escape(title)}</div>",
         f"<div class='authors'>{escape(', '.join(authors))}</div>",
-        "<div class='citation'>Citation (APA): {author} ({year}). <i>{t}</i> [Kindle version]. Retrieved from Amazon.com</div>".format(
-            author=escape(authors[0]) if authors else "",
-            year=escape(year),
-            t=escape(title),
-        ),
+        _format_citation_html(title, authors, year),
         "<hr />",
     ]
 
