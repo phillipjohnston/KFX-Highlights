@@ -21,8 +21,15 @@ if extracted.exists():
 else:
     sys.path.insert(0, str(base_dir / "KFX Input.zip"))
 from kfxlib import yj_book
-from kfxlib.ion import IonSymbol
+from kfxlib.ion import IonAnnotation, IonSymbol
 from kfxlib.yj_container import YJFragment
+
+
+def _unwrap(obj):
+    """Unwrap IonAnnotation wrappers to get the underlying value."""
+    while isinstance(obj, IonAnnotation):
+        obj = obj.value
+    return obj
 
 
 def load_content_sections(kfx_path):
@@ -86,22 +93,30 @@ def load_navigation(kfx_path):
         if isinstance(container, IonSymbol):
             container = book.fragments.get(ftype="$391", fid=container)
         data = container.value if isinstance(container, YJFragment) else container
+        data = _unwrap(data)
         typ = data.get("$235")
         if typ == "$237":  # page list
             page_list = data.get("$247", [])
             for entry in page_list:
-                pid = eid_to_pid.get(entry["$246"]["$155"], 0) + entry["$246"].get("$143", 0)
-                label = entry["$241"]["$244"]
-                pages.append((pid, label))
+                entry = _unwrap(entry)
+                loc = _unwrap(entry["$246"])
+                pid = eid_to_pid.get(loc["$155"], 0) + loc.get("$143", 0)
+                label_obj = _unwrap(entry.get("$241", {}))
+                label = label_obj.get("$244") if isinstance(label_obj, dict) else None
+                if label is not None:
+                    pages.append((pid, label))
             pages.sort(key=lambda x: x[0])
         elif typ == "$212":  # toc
             def build_items(items):
                 result = []
                 for itm in items:
-                    eid = itm["$246"]["$155"]
-                    offset = itm["$246"].get("$143", 0)
+                    itm = _unwrap(itm)
+                    loc = _unwrap(itm["$246"])
+                    eid = loc["$155"]
+                    offset = loc.get("$143", 0)
                     pid = eid_to_pid.get(eid, 0) + offset
-                    label = itm["$241"]["$244"]
+                    label_obj = _unwrap(itm.get("$241", {}))
+                    label = label_obj.get("$244", "") if isinstance(label_obj, dict) else ""
                     node = {
                         "label": label,
                         "pid": pid,
