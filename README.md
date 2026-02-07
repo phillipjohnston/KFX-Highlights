@@ -9,11 +9,21 @@ Most of the documents I read on my Kindle are sent via "Send to Kindle" so that 
 jhowell released a [KRDS Parser](https://www.mobileread.com/forums/showthread.php?t=322172). It's located [here](https://github.com/K-R-D-S/KRDS). 
 
 
-Dependencies:
-pip install pillow
-pip install pypdf
-pip install lxml
-pip install beautifulsoup4
+## Setup
+
+Create a virtual environment and install the required dependencies:
+
+```
+python3 -m venv .venv
+source .venv/bin/activate
+pip install pillow pypdf lxml beautifulsoup4
+```
+
+Activate the virtual environment before each use:
+
+```
+source .venv/bin/activate
+```
 
 ## Usage
 
