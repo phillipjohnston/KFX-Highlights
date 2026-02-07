@@ -212,6 +212,18 @@ def generate_html(title, authors, items, output_path, year=""):
                 height: 1px;
                 background: none repeat scroll 0% 0% rgb(221, 221, 221);
             }
+            @media (prefers-color-scheme: dark) {
+                body { background: #1a1a1a; }
+                .bookTitle, .noteHeading, .sectionHeading, .noteText {
+                    color: #e0e0e0;
+                }
+                .notebookFor, .authors, .citation {
+                    color: #999999;
+                }
+                hr {
+                    background: #444444;
+                }
+            }
         </style>
     """
 
