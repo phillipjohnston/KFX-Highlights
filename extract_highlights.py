@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
-                 title=None):
+                 title=None, keep_json=False):
     """Run the krds + extraction pipeline for a single kfx/yjr pair."""
     output_dir.mkdir(exist_ok=True)
 
@@ -27,6 +27,9 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
     if title:
         extract_cmd.extend(["--title", title])
     subprocess.run(extract_cmd, check=True)
+
+    if not keep_json and json_file.exists():
+        json_file.unlink()
 
 
 def find_pairs(input_dir):
@@ -95,6 +98,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "--title", type=str, default=None,
         help="override the book title in the output (single-pair mode only)",
     )
+    parser.add_argument(
+        "--keep-json", action="store_true",
+        help="keep intermediate JSON files (deleted by default after success)",
+    )
 
     args = parser.parse_args()
 
@@ -113,7 +120,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             parser.error(f"YJR file not found: {args.yjr_file}")
 
         process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir,
-                     quiet=args.quiet, title=args.title)
+                     quiet=args.quiet, title=args.title,
+                     keep_json=args.keep_json)
 
     else:
         # Bulk mode — scan input/ for paired files
@@ -146,7 +154,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                     continue
 
             try:
-                process_pair(kfx, yjr, script_dir, output_dir, quiet=args.quiet)
+                process_pair(kfx, yjr, script_dir, output_dir, quiet=args.quiet,
+                             keep_json=args.keep_json)
                 print(f"  -> Done")
             except subprocess.CalledProcessError as e:
                 print(f"  -> FAILED (exit code {e.returncode})")
