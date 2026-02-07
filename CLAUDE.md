@@ -19,7 +19,7 @@ Bulk mode automatically pairs `.kfx` and `.yjr` files by matching filenames (the
 
 ### Kindle device mode
 
-Connect a Kindle via USB and use `--kindle` to process directly from the device. The tool scans `documents/` and `documents/Downloads/` for `.kfx`/`.yjr` pairs.
+Connect a Kindle via USB and use `--kindle` to process directly from the device. The tool scans `documents/`, `documents/Downloads/`, and subdirectories of `Downloads/` (e.g. `Downloads/Items01/`) for `.kfx`/`.yjr` pairs.
 
 ```
 # Default: process in-place from Kindle, output to output/

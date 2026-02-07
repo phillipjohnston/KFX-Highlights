@@ -168,14 +168,19 @@ def validate_kindle_path(kindle_path):
 def find_kindle_pairs(kindle_path):
     """Scan a mounted Kindle for .kfx / .yjr pairs.
 
-    Looks in documents/ and documents/Downloads/. For each .kfx file, checks
-    the sibling .sdr/ folder for a matching .yjr annotation file.
+    Looks in documents/, documents/Downloads/, and any subdirectories of
+    Downloads/ (e.g. Downloads/Items01/). For each .kfx file, checks the
+    sibling .sdr/ folder for a matching .yjr annotation file.
     """
     docs = validate_kindle_path(kindle_path)
     scan_dirs = [docs]
     downloads = docs / "Downloads"
     if downloads.is_dir():
         scan_dirs.append(downloads)
+        # Kindle may organize downloads into subdirectories like Items01/
+        for child in sorted(downloads.iterdir()):
+            if child.is_dir() and not child.name.endswith(".sdr"):
+                scan_dirs.append(child)
 
     pairs = []
     seen_stems = set()
