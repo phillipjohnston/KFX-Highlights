@@ -2,8 +2,10 @@
 """Extract highlights and notes from Kindle KFX books using synced annotation data."""
 
 import argparse
+import os
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 
@@ -107,6 +109,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "-f", "--format", choices=["html", "md"], default="html",
         help="output format: html (default) or md (Markdown)",
     )
+    parser.add_argument(
+        "-j", "--jobs", type=int, default=1, metavar="N",
+        help="number of books to process in parallel (default: 1, 0 = CPU count)",
+    )
 
     args = parser.parse_args()
 
@@ -144,32 +150,65 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         for kfx, yjr in pairs:
             print(f"  {kfx.name}")
 
-        failed = []
+        # Filter out already-processed books if requested
+        to_process = []
         skipped = []
-        for i, (kfx, yjr) in enumerate(pairs, 1):
-            print(f"\n{'='*60}")
-            print(f"[{i}/{len(pairs)}] Processing: {kfx.stem}")
-            print(f"{'='*60}")
-
+        ext = ".highlights.md" if args.format == "md" else ".highlights.html"
+        for kfx, yjr in pairs:
             if args.skip_existing:
-                ext = ".highlights.md" if args.format == "md" else ".highlights.html"
                 output_file = output_dir / kfx.with_suffix(ext).name
                 if output_file.exists():
-                    print(f"  -> Skipped (output already exists)")
                     skipped.append(kfx.name)
                     continue
+            to_process.append((kfx, yjr))
 
-            try:
-                process_pair(kfx, yjr, script_dir, output_dir, quiet=args.quiet,
-                             keep_json=args.keep_json, fmt=args.format)
-                print(f"  -> Done")
-            except subprocess.CalledProcessError as e:
-                print(f"  -> FAILED (exit code {e.returncode})")
-                failed.append(kfx.name)
+        if skipped:
+            print(f"  Skipping {len(skipped)} already-processed book(s)")
+
+        if not to_process:
+            print("Nothing to process (all skipped).")
+            sys.exit(0)
+
+        jobs = args.jobs if args.jobs >= 1 else (os.cpu_count() or 1)
+        failed = []
+
+        if jobs == 1:
+            # Sequential mode — keeps familiar progress output
+            for i, (kfx, yjr) in enumerate(to_process, 1):
+                print(f"\n{'='*60}")
+                print(f"[{i}/{len(to_process)}] Processing: {kfx.stem}")
+                print(f"{'='*60}")
+                try:
+                    process_pair(kfx, yjr, script_dir, output_dir,
+                                 quiet=args.quiet, keep_json=args.keep_json,
+                                 fmt=args.format)
+                    print(f"  -> Done")
+                except subprocess.CalledProcessError as e:
+                    print(f"  -> FAILED (exit code {e.returncode})")
+                    failed.append(kfx.name)
+        else:
+            # Parallel mode
+            print(f"\nProcessing {len(to_process)} book(s) with {jobs} workers...")
+            with ProcessPoolExecutor(max_workers=jobs) as pool:
+                futures = {
+                    pool.submit(process_pair, kfx, yjr, script_dir, output_dir,
+                                quiet=True, keep_json=args.keep_json,
+                                fmt=args.format): kfx
+                    for kfx, yjr in to_process
+                }
+                for future in as_completed(futures):
+                    kfx = futures[future]
+                    try:
+                        future.result()
+                        print(f"  Done: {kfx.stem}")
+                    except subprocess.CalledProcessError as e:
+                        print(f"  FAILED: {kfx.stem} (exit code {e.returncode})")
+                        failed.append(kfx.name)
 
         print(f"\n{'='*60}")
-        processed = len(pairs) - len(failed) - len(skipped)
-        print(f"Processed {processed}/{len(pairs)} books successfully.", end="")
+        processed = len(to_process) - len(failed)
+        total = len(pairs)
+        print(f"Processed {processed}/{total} books successfully.", end="")
         if skipped:
             print(f" ({len(skipped)} skipped)", end="")
         print()
