@@ -9,8 +9,12 @@ Extracts highlights and notes from Kindle KFX books using synced annotation data
 ## Workflow
 
 1. Copy `.kfx` and `.yjr` files from Kindle's `documents/downloads` folder to `input/`
-2. Run the pipeline: `python extract_highlights.py input/<book>.kfx input/<annotations>.yjr`
+2. Run the pipeline:
+   - **Bulk mode** (all books): `python extract_highlights.py`
+   - **Single book**: `python extract_highlights.py input/<book>.kfx input/<annotations>.yjr`
 3. Output HTML goes to `output/`
+
+Bulk mode automatically pairs `.kfx` and `.yjr` files by matching filenames (the `.yjr` filename starts with the `.kfx` stem).
 
 ## Setup
 
@@ -24,7 +28,7 @@ pip install pillow pypdf lxml beautifulsoup4
 
 Three scripts form a pipeline:
 
-- **`extract_highlights.py`** — Entry point. Orchestrates the two-step pipeline by calling `krds.py` then `extract_highlights_kfxlib.py` as subprocesses. Takes `.kfx` and `.yjr` files as arguments.
+- **`extract_highlights.py`** — Entry point. Orchestrates the two-step pipeline by calling `krds.py` then `extract_highlights_kfxlib.py` as subprocesses. Supports single-pair mode (explicit arguments) or bulk mode (scans `input/` for paired files).
 - **`krds.py`** — Third-party KRDS parser (GPL v3, by John Howell). Deserializes Kindle binary annotation files (`.yjr`, `.azw3f`, etc.) into JSON. Contains `KindleReaderDataStore` which handles the binary format, and `Deserializer` for low-level unpacking.
 - **`extract_highlights_kfxlib.py`** — Core extraction logic. Uses the `kfxlib` library (from bundled `KFX Input.zip` or extracted `kfxlib_extracted/` directory) to decode KFX book content. Maps annotation positions from the JSON onto book content sections, resolves page numbers and TOC sections, and generates a styled HTML output mimicking Kindle Notebook format.
 
