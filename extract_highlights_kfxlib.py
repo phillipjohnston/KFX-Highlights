@@ -217,6 +217,8 @@ def generate_html(title, authors, items, output_path, year=""):
             meta_parts.append(item["chapter"])
         if item.get("page"):
             meta_parts.append(f"Page {item['page']}")
+        if item.get("location") is not None:
+            meta_parts.append(f"Location {item['location']}")
         meta_str = " - " + " >  ".join(meta_parts) if meta_parts else ""
 
         text = escape(item.get("text", ""))
@@ -303,6 +305,7 @@ def main():
             "creationTime": ann["creationTime"],
             "text": text,
             "page": page,
+            "location": start,
             "section": section,
             "chapter": chapter,
             "type": "highlight",
@@ -312,6 +315,7 @@ def main():
                 "creationTime": "",
                 "text": note_text,
                 "page": page,
+                "location": start,
                 "section": section,
                 "chapter": chapter,
                 "type": "note",
