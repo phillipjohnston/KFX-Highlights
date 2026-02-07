@@ -391,12 +391,34 @@ def main():
         notes_by_end.setdefault(pos, []).append(n["note"])
 
     annotations.sort(key=lambda a: int(a["startPosition"].split(":")[1]))
+
+    # Deduplicate overlapping highlights: if one range fully contains another,
+    # keep the longer one
+    deduped = []
+    for ann in annotations:
+        s = int(ann["startPosition"].split(":")[1])
+        e = int(ann["endPosition"].split(":")[1])
+        # Check if this annotation is contained within the previous one
+        if deduped:
+            ps, pe = deduped[-1]
+            if s >= ps and e <= pe:
+                continue  # fully contained, skip
+            # Check if the previous one is contained within this one
+            if ps >= s and pe <= e:
+                deduped[-1] = (s, e, ann)
+                continue
+        deduped.append((s, e, ann))
+
+    n_removed = len(annotations) - len(deduped)
+    annotations_deduped = [(s, e, a) for s, e, a in deduped]
+
     quiet = args.quiet
     if not quiet:
-        print(f"Found {len(annotations)} highlights:\n{'='*60}")
-    for i, ann in enumerate(annotations, 1):
-        start = int(ann["startPosition"].split(":")[1])
-        end = int(ann["endPosition"].split(":")[1])
+        msg = f"Found {len(annotations_deduped)} highlights"
+        if n_removed:
+            msg += f" ({n_removed} overlapping removed)"
+        print(f"{msg}:\n{'='*60}")
+    for i, (start, end, ann) in enumerate(annotations_deduped, 1):
         text = extract_text(sections, start, end)
         page = page_for_pid(start)
         section, chapter = find_section(start)
