@@ -1,3 +1,5 @@
 input/
 output/
 config.yaml
+.DS_Store
+__pycache__
