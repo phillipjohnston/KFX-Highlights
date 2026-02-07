@@ -208,7 +208,7 @@ class KindleReaderDataStore(object):
             obj["device"] = val.pop(0)
 
         elif name == "annotation.cache.object":
-            for _ in range(val.pop(0)):
+            for _ in range(val.pop(0) if val else 0):
                 annotation_type = val.pop(0)
                 annot_class_name = self.ANNOT_CLASS_NAMES.get(annotation_type)
                 if annot_class_name is None:
