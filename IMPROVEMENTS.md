@@ -20,28 +20,28 @@ Improvement opportunities identified for the KFX highlight extraction pipeline.
 
 - [x] **Preserve paragraph structure** — Newlines preserved in highlight text. HTML uses `<br/>`, Markdown uses multi-line blockquotes.
 
-- [ ] **Highlight color support** — All highlights rendered as yellow. Kindle supports multiple colors for categorization. Preserve the original color. *(krds.py annotation data may include color info; extract_highlights_kfxlib.py — use actual color)*
+- [ ] **Highlight color support** — All highlights rendered as yellow. Kindle supports multiple colors for categorization. *(Deferred: only one template value found in sample data. The `template` field is `"0\ufffc0"` format where the first digit likely maps to color index. Needs multi-color test data.)*
 
 - [x] **`requirements.txt`** — Standard pip dependency file with minimum version constraints.
 
 ## Optimization Opportunities
 
-- [ ] **Parallel bulk processing** — Books processed sequentially. Use `concurrent.futures.ProcessPoolExecutor` for multi-book runs. *(extract_highlights.py — wrap `process_pair` calls in executor)*
+- [x] **Parallel bulk processing** — `-j/--jobs N` flag for concurrent processing (0 = CPU count). Default remains sequential.
 
-- [ ] **Externalize CSS/templates** — CSS and HTML template embedded in Python strings. Move to external files or use a templating approach. *(extract_highlights_kfxlib.py — separate CSS file or Jinja2)*
+- [x] **Externalize CSS** — CSS moved to `highlights.css`, loaded and inlined at generation time. Easy to customize without editing Python.
 
 - [ ] **Config file support** — Persistent preferences via `config.yaml` (output format, citation style, theme, etc.) to reduce repeated CLI flags. *(new config loading in extract_highlights.py)*
 
 ## Lower Priority but Valuable
 
-- [ ] **JSON/CSV export** — For programmatic analysis or spreadsheet import. *(extract_highlights_kfxlib.py — add `generate_json()` and `generate_csv()` output functions)*
+- [x] **JSON/CSV export** — `--format json` and `--format csv` for programmatic analysis or spreadsheet import.
 
 - [ ] **Chapter grouping in output** — Group highlights by TOC section/chapter instead of flat list. *(extract_highlights_kfxlib.py — restructure `items` list by section before rendering)*
 
 - [x] **Dark mode CSS** — Automatic dark mode via `prefers-color-scheme` media query.
 
-- [ ] **Deduplication** — Detect and merge overlapping highlights. *(extract_highlights_kfxlib.py — compare position ranges before appending)*
+- [x] **Deduplication** — Overlapping highlights detected and merged, keeping the longer range.
 
 - [x] **Stats summary in output** — Highlight/note counts, section count, and date range in output header.
 
-- [ ] **Auto-detect connected Kindle** — Scan for mounted Kindle device and copy files automatically. *(extract_highlights.py — platform-specific mount point detection)*
+- [ ] **Auto-detect connected Kindle** — Scan for mounted Kindle device and copy files automatically. *(extract_highlights.py — platform-specific mount point detection, scan /Volumes for Kindle)*

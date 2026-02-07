@@ -18,11 +18,12 @@ Bulk mode automatically pairs `.kfx` and `.yjr` files by matching filenames (the
 
 ### Useful flags
 
-- `-f md` / `--format md` — Output Markdown instead of HTML (for Obsidian, Notion, etc.)
+- `-f {html,md,json,csv}` — Output format (default: html). Markdown for note-taking apps, JSON/CSV for programmatic use.
 - `-q` / `--quiet` — Suppress per-highlight output, show summary only
 - `--skip-existing` — Skip books whose output file already exists (bulk mode)
 - `--title "My Title"` — Override the book title in output (single-pair mode)
 - `--keep-json` — Keep intermediate JSON files (deleted by default after success)
+- `-j N` / `--jobs N` — Process N books in parallel (0 = CPU count, default: 1)
 - `-o DIR` — Write output to a custom directory
 
 ## Setup
@@ -50,3 +51,4 @@ Three scripts form a pipeline:
 
 - Input files go in `input/`, output artifacts go in `output/` — both are gitignored.
 - The `KFX Input.zip` is tracked via Git LFS (see `.gitattributes`).
+- `highlights.css` — External CSS for HTML output. Edit to customize styling (colors, fonts, dark mode).
