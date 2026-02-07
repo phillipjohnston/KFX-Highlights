@@ -59,7 +59,7 @@ python extract_highlights.py --kindle /Volumes/Kindle --import-metadata
 
 #### DRM-protected books
 
-Books with DRM will fail extraction and are flagged separately in the output. Use `--import-metadata` to copy just the annotation files, then manually place an unlocked `.kfx` (e.g., from Calibre) in `input/` and run in bulk mode.
+Books with DRM will fail extraction and are flagged separately in the output. Use `--import-metadata` to copy just the annotation files, then use `--calibre-library` to automatically match them with unlocked KFX files in your Calibre library (see below). Alternatively, manually place an unlocked `.kfx` in `input/` and run in bulk mode.
 
 #### Testing and preview
 
@@ -69,6 +69,35 @@ python extract_highlights.py --kindle /Volumes/Kindle --dry-run
 
 # Process only the first N books
 python extract_highlights.py --kindle /Volumes/Kindle --limit 5
+```
+
+### Calibre library mode
+
+If you have a Calibre library with unlocked KFX copies of your DRM-protected Kindle books, this mode automatically matches them by ASIN and extracts highlights using the Calibre KFX files directly (no file copying needed).
+
+First, import annotations from your Kindle:
+
+```bash
+python extract_highlights.py --kindle /Volumes/Kindle --import-metadata
+```
+
+Then match and extract:
+
+```bash
+# Preview the matching report
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --dry-run
+
+# Process all ASIN-matched books
+python extract_highlights.py --calibre-library "/path/to/Calibre Library"
+
+# Include fuzzy title matches (shown in report but skipped by default)
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --accept-fuzzy
+```
+
+The matching report shows four categories: ASIN-matched with KFX (processable), matched but no KFX format in Calibre, matched with KFX but no `.yjr` imported yet, and unmatched. You can set a persistent default in `config.yaml`:
+
+```yaml
+calibre_library: /path/to/Calibre Library
 ```
 
 ### Bulk mode (all books at once)
@@ -110,6 +139,8 @@ Output goes to `output/`.
 | `--import-only` | Copy files from Kindle to `input/` without extracting |
 | `--import-book` | Copy files to `input/` and extract |
 | `--import-metadata` | Copy only `.yjr` to `input/pending/` (for DRM books) |
+| `--calibre-library PATH` | Match DRM books to Calibre library KFX files |
+| `--accept-fuzzy` | Include fuzzy title matches in Calibre mode |
 | `--dry-run` | Preview what would be done without making changes |
 | `--limit N` | Process at most N books |
 

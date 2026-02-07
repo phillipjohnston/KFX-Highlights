@@ -6,10 +6,12 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 
 try:
@@ -37,6 +39,7 @@ KNOWN_CONFIG_KEYS = {
     "citation_style": {"type": str, "choices": ["apa"]},
     "theme": {"type": str, "choices": ["default"]},
     "kindle_path": {"type": str},
+    "calibre_library": {"type": str},
 }
 
 
@@ -118,6 +121,25 @@ def save_sync_state(script_dir, state):
 
 
 _SAVED_RE = re.compile(r"Saved (\d+) highlights? and (\d+) notes?")
+_ASIN_RE = re.compile(r'_([A-Z0-9]{10,})$')
+
+
+def extract_asin(stem):
+    """Extract ASIN from Kindle stem like 'Design Patte~ng Series)_B000SEIBB8'."""
+    m = _ASIN_RE.search(stem)
+    return m.group(1) if m else None
+
+
+def kindle_stem_to_title(stem):
+    """Convert a Kindle filename stem to a rough title for fuzzy matching.
+
+    Strips the ASIN suffix and replaces ~ with space.
+    """
+    # Remove ASIN suffix
+    title = _ASIN_RE.sub('', stem)
+    # Replace ~ (Kindle filename truncation marker) with space
+    title = title.replace('~', ' ')
+    return title.strip()
 
 
 def _count_annotations(json_file):
@@ -399,6 +421,401 @@ def _run_extraction(to_process, script_dir, output_dir, args, sync_state,
                                         error=f"exit code {e.returncode}")
 
 
+def build_calibre_index(calibre_path):
+    """Query Calibre's metadata.db to build lookup indexes.
+
+    Returns (asin_to_kfx, asin_to_title, title_index) where:
+    - asin_to_kfx: {asin: {title, kfx_path, format, book_id}} — books with KFX/KFX-ZIP
+    - asin_to_title: {asin: {title, book_id}} — all books with ASINs
+    - title_index: {book_id: {title, has_kfx, kfx_path}} — for fuzzy matching
+    """
+    db_path = calibre_path / "metadata.db"
+    if not db_path.is_file():
+        print(f"Error: Calibre metadata.db not found at {db_path}")
+        sys.exit(1)
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        # All books with mobi-asin identifiers
+        asin_rows = conn.execute("""
+            SELECT b.id AS book_id, b.title, i.val AS asin
+            FROM books b
+            JOIN identifiers i ON i.book = b.id
+            WHERE i.type = 'mobi-asin'
+        """).fetchall()
+
+        # All KFX/KFX-ZIP format entries
+        kfx_rows = conn.execute("""
+            SELECT d.book, d.format, d.name, b.title, b.path
+            FROM data d
+            JOIN books b ON b.id = d.book
+            WHERE d.format IN ('KFX', 'KFX-ZIP')
+        """).fetchall()
+    finally:
+        conn.close()
+
+    # Build kfx lookup: book_id -> {format, title, author_path}
+    kfx_by_book = {}
+    for row in kfx_rows:
+        book_id = row["book"]
+        fmt = row["format"]
+        # Prefer KFX over KFX-ZIP
+        if book_id in kfx_by_book and kfx_by_book[book_id]["format"] == "KFX":
+            continue
+        ext = ".kfx" if fmt == "KFX" else ".kfx-zip"
+        # Calibre stores files as: library/Author/Title (ID)/name.ext
+        # The 'name' column from the data table is the actual filename stem
+        book_dir = calibre_path / row["path"]
+        kfx_path = book_dir / f"{row['name']}{ext}"
+        if not kfx_path.is_file():
+            # Fall back to globbing the directory
+            try:
+                pattern = f"*.{fmt.lower()}" if fmt == "KFX" else "*.kfx-zip"
+                matches = list(book_dir.glob(pattern))
+                if not matches:
+                    matches = [p for p in book_dir.iterdir()
+                               if p.suffix.lower() == ext]
+                kfx_path = matches[0] if matches else None
+            except OSError:
+                kfx_path = None
+
+        if kfx_path and kfx_path.is_file():
+            kfx_by_book[book_id] = {
+                "format": fmt,
+                "kfx_path": kfx_path,
+                "title": row["title"],
+            }
+
+    # Build the three indexes
+    asin_to_kfx = {}
+    asin_to_title = {}
+    for row in asin_rows:
+        asin = row["asin"].upper()
+        book_id = row["book_id"]
+        asin_to_title[asin] = {"title": row["title"], "book_id": book_id}
+        if book_id in kfx_by_book:
+            info = kfx_by_book[book_id]
+            asin_to_kfx[asin] = {
+                "title": info["title"],
+                "kfx_path": info["kfx_path"],
+                "format": info["format"],
+                "book_id": book_id,
+            }
+
+    title_index = {}
+    # Include books that have KFX (with or without ASIN)
+    for book_id, info in kfx_by_book.items():
+        title_index[book_id] = {
+            "title": info["title"],
+            "has_kfx": True,
+            "kfx_path": info["kfx_path"],
+        }
+    # Add ASIN-bearing books without KFX
+    for row in asin_rows:
+        if row["book_id"] not in title_index:
+            title_index[row["book_id"]] = {
+                "title": row["title"],
+                "has_kfx": False,
+                "kfx_path": None,
+            }
+
+    return asin_to_kfx, asin_to_title, title_index
+
+
+def fuzzy_match_title(kindle_title, title_index, threshold=0.80):
+    """Find the best fuzzy match for a Kindle title in the Calibre title index.
+
+    Returns {book_id, title, has_kfx, kfx_path, score} or None.
+    """
+    best_score = 0
+    best_match = None
+    kindle_lower = kindle_title.lower()
+
+    for book_id, info in title_index.items():
+        score = SequenceMatcher(None, kindle_lower, info["title"].lower()).ratio()
+        if score > best_score:
+            best_score = score
+            best_match = (book_id, info)
+
+    if best_match and best_score >= threshold:
+        book_id, info = best_match
+        return {
+            "book_id": book_id,
+            "title": info["title"],
+            "has_kfx": info["has_kfx"],
+            "kfx_path": info["kfx_path"],
+            "score": best_score,
+        }
+    return None
+
+
+def find_yjr_for_stem(stem, sync_state, script_dir):
+    """Locate the .yjr annotation file for a Kindle book stem.
+
+    Search order:
+    1. local_yjr_path from sync state (set by prior --import-metadata)
+    2. Scan input/pending/ by stem prefix match
+
+    Returns Path or None.
+    """
+    books = sync_state.get("books", {})
+    record = books.get(stem, {})
+
+    # Check sync state for a known local .yjr path
+    local_yjr = record.get("local_yjr_path")
+    if local_yjr:
+        p = Path(local_yjr)
+        if p.is_file():
+            return p
+
+    # Scan input/pending/ for a matching .yjr
+    pending_dir = script_dir / "input" / "pending"
+    if pending_dir.is_dir():
+        for yjr in sorted(pending_dir.glob("*.yjr")):
+            if yjr.stem.startswith(stem):
+                return yjr
+
+    return None
+
+
+def match_calibre_books(sync_state, calibre_path, script_dir):
+    """Match DRM-flagged books from sync state to Calibre library entries.
+
+    Returns (matched, matched_no_kfx, unmatched, no_yjr) where:
+    - matched: [{stem, asin, calibre_title, kfx_path, yjr_path, fuzzy, score}]
+    - matched_no_kfx: [{stem, asin, calibre_title}]
+    - unmatched: [stem]
+    - no_yjr: [{stem, calibre_title, kfx_path}]
+    """
+    asin_to_kfx, asin_to_title, title_index = build_calibre_index(calibre_path)
+
+    books = sync_state.get("books", {})
+    drm_statuses = {"drm-flagged", "metadata-only"}
+    drm_books = {stem: record for stem, record in books.items()
+                 if record.get("status") in drm_statuses}
+
+    matched = []
+    matched_no_kfx = []
+    unmatched = []
+    no_yjr = []
+
+    for stem, record in sorted(drm_books.items()):
+        asin = extract_asin(stem)
+
+        # Try ASIN match first
+        if asin and asin in asin_to_kfx:
+            info = asin_to_kfx[asin]
+            yjr_path = find_yjr_for_stem(stem, sync_state, script_dir)
+            if yjr_path:
+                matched.append({
+                    "stem": stem,
+                    "asin": asin,
+                    "calibre_title": info["title"],
+                    "kfx_path": info["kfx_path"],
+                    "yjr_path": yjr_path,
+                    "fuzzy": False,
+                    "score": 1.0,
+                })
+            else:
+                no_yjr.append({
+                    "stem": stem,
+                    "calibre_title": info["title"],
+                    "kfx_path": info["kfx_path"],
+                })
+            continue
+
+        if asin and asin in asin_to_title:
+            # ASIN matched a Calibre book but it has no KFX format
+            info = asin_to_title[asin]
+            matched_no_kfx.append({
+                "stem": stem,
+                "asin": asin,
+                "calibre_title": info["title"],
+            })
+            continue
+
+        # Fallback: fuzzy title matching
+        kindle_title = kindle_stem_to_title(stem)
+        fuzzy = fuzzy_match_title(kindle_title, title_index)
+        if fuzzy and fuzzy["has_kfx"]:
+            yjr_path = find_yjr_for_stem(stem, sync_state, script_dir)
+            if yjr_path:
+                matched.append({
+                    "stem": stem,
+                    "asin": asin,
+                    "calibre_title": fuzzy["title"],
+                    "kfx_path": fuzzy["kfx_path"],
+                    "yjr_path": yjr_path,
+                    "fuzzy": True,
+                    "score": fuzzy["score"],
+                })
+            else:
+                no_yjr.append({
+                    "stem": stem,
+                    "calibre_title": fuzzy["title"],
+                    "kfx_path": fuzzy["kfx_path"],
+                })
+        elif fuzzy and not fuzzy["has_kfx"]:
+            matched_no_kfx.append({
+                "stem": stem,
+                "asin": asin,
+                "calibre_title": fuzzy["title"],
+            })
+        else:
+            unmatched.append(stem)
+
+    return matched, matched_no_kfx, unmatched, no_yjr
+
+
+def run_calibre_matching(args, script_dir, sync_state, output_dir):
+    """Top-level handler for --calibre-library mode.
+
+    Matches DRM-flagged books to Calibre library, prints a report,
+    and processes matched books.
+    """
+    calibre_path = args.calibre_library
+
+    if not calibre_path.is_dir():
+        print(f"Error: Calibre library not found: {calibre_path}")
+        sys.exit(1)
+
+    matched, matched_no_kfx, unmatched, no_yjr = match_calibre_books(
+        sync_state, calibre_path, script_dir)
+
+    # Count DRM books for context
+    books = sync_state.get("books", {})
+    drm_statuses = {"drm-flagged", "metadata-only"}
+    drm_count = sum(1 for r in books.values() if r.get("status") in drm_statuses)
+
+    # Separate ASIN and fuzzy matches for reporting
+    asin_matched = [m for m in matched if not m["fuzzy"]]
+    fuzzy_matched = [m for m in matched if m["fuzzy"]]
+
+    # --- Report ---
+    print(f"\nCalibre library: {calibre_path}")
+    print(f"DRM-flagged books in sync state: {drm_count}\n")
+
+    print(f"ASIN-matched with KFX: {len(asin_matched)}")
+    if not args.quiet:
+        for m in asin_matched:
+            print(f"  {m['stem']}")
+            print(f"    -> {m['calibre_title']}")
+
+    if fuzzy_matched:
+        print(f"\nFuzzy-matched with KFX: {len(fuzzy_matched)}"
+              + (" (will be skipped — use --accept-fuzzy to include)"
+                 if not args.accept_fuzzy else ""))
+        for m in fuzzy_matched:
+            print(f"  {m['stem']}")
+            print(f"    -> {m['calibre_title']} (score: {m['score']:.0%})")
+
+    if matched_no_kfx:
+        print(f"\nMatched but no KFX format: {len(matched_no_kfx)}")
+        if not args.quiet:
+            for m in matched_no_kfx:
+                print(f"  {m['stem']}")
+                print(f"    -> {m['calibre_title']}")
+
+    if no_yjr:
+        print(f"\nMatched with KFX but no .yjr found: {len(no_yjr)}")
+        if not args.quiet:
+            for m in no_yjr:
+                print(f"  {m['stem']}")
+                print(f"    -> {m['calibre_title']}")
+        print("  Tip: use --kindle --import-metadata to copy annotations first.")
+
+    if unmatched:
+        print(f"\nNo match found: {len(unmatched)}")
+        if not args.quiet:
+            for stem in unmatched:
+                title = kindle_stem_to_title(stem)
+                print(f"  {title}")
+
+    # Filter to processable books
+    to_process = list(asin_matched)
+    if args.accept_fuzzy:
+        to_process.extend(fuzzy_matched)
+
+    if not to_process:
+        print("\nNo books to process.")
+        return
+
+    # Apply --limit
+    if args.limit and len(to_process) > args.limit:
+        print(f"\nLimiting to first {args.limit} book(s)")
+        to_process = to_process[:args.limit]
+
+    # Apply --dry-run
+    if args.dry_run:
+        print(f"\nDry run — would process {len(to_process)} book(s):")
+        for m in to_process:
+            label = "fuzzy" if m["fuzzy"] else "asin"
+            print(f"  [{label}] {m['calibre_title']}")
+        return
+
+    # Process matched books
+    print(f"\nProcessing {len(to_process)} book(s)...\n")
+    failed = []
+    succeeded = 0
+
+    for i, m in enumerate(to_process, 1):
+        print(f"{'='*60}")
+        print(f"[{i}/{len(to_process)}] {m['calibre_title']}")
+        print(f"{'='*60}")
+
+        try:
+            nh, nn = process_pair(
+                m["kfx_path"], m["yjr_path"], script_dir, output_dir,
+                quiet=True, title=m["calibre_title"],
+                keep_json=args.keep_json, fmt=args.format)
+            print(f"  -> Done ({nh} highlights, {nn} notes)")
+            succeeded += 1
+
+            # Update sync state directly by Kindle stem
+            record = books.get(m["stem"], {})
+            record["status"] = "success"
+            record["last_attempt"] = datetime.now(timezone.utc).isoformat()
+            record["error"] = None
+            record["calibre_kfx_path"] = str(m["kfx_path"])
+            record["calibre_title"] = m["calibre_title"]
+            if nh is not None:
+                record["highlights"] = nh
+            if nn is not None:
+                record["notes"] = nn
+            books[m["stem"]] = record
+
+        except DRMError as e:
+            print(f"  -> FAILED: Calibre KFX is also DRM-protected")
+            failed.append(m)
+            record = books.get(m["stem"], {})
+            record["last_attempt"] = datetime.now(timezone.utc).isoformat()
+            record["error"] = "calibre-kfx-drm"
+            record["calibre_kfx_path"] = str(m["kfx_path"])
+            books[m["stem"]] = record
+        except subprocess.CalledProcessError as e:
+            print(f"  -> FAILED (exit code {e.returncode})")
+            failed.append(m)
+            record = books.get(m["stem"], {})
+            record["last_attempt"] = datetime.now(timezone.utc).isoformat()
+            record["error"] = f"calibre-exit-{e.returncode}"
+            books[m["stem"]] = record
+
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"Processed: {succeeded}/{len(to_process)}", end="")
+    if failed:
+        print(f"  Failed: {len(failed)}", end="")
+    print()
+
+    if failed:
+        print("\nFailed:")
+        for m in failed:
+            print(f"  - {m['calibre_title']}")
+
+    save_sync_state(script_dir, sync_state)
+
+
 def find_pairs(input_dir):
     """Match .kfx files to .yjr files in input_dir.
 
@@ -505,6 +922,14 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "--limit", type=int, default=None, metavar="N",
         help="process at most N books (for testing)",
     )
+    parser.add_argument(
+        "--calibre-library", type=Path, default=None, metavar="PATH",
+        help="path to Calibre library (match DRM books to unlocked Calibre KFX files)",
+    )
+    parser.add_argument(
+        "--accept-fuzzy", action="store_true",
+        help="include fuzzy title matches when using --calibre-library (default: ASIN-only)",
+    )
 
     script_dir = Path(__file__).parent
     config = load_config(script_dir)
@@ -520,6 +945,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             argparse_defaults["format"] = value
         elif key == "kindle_path":
             argparse_defaults["kindle"] = Path(value)
+        elif key == "calibre_library":
+            argparse_defaults["calibre_library"] = Path(value)
         elif key in ("quiet", "keep_json", "skip_existing", "jobs"):
             argparse_defaults[key] = value
         # citation_style and theme are reserved for future use
@@ -541,9 +968,27 @@ must start with the .kfx stem (Kindle's default naming convention).""",
     if args.kindle and (args.kfx_file or args.yjr_file):
         parser.error("--kindle cannot be combined with positional kfx/yjr arguments")
 
+    if args.calibre_library and (args.kfx_file or args.yjr_file):
+        parser.error("--calibre-library cannot be combined with positional kfx/yjr arguments")
+
+    if args.calibre_library and args.kindle:
+        parser.error("--calibre-library cannot be combined with --kindle")
+
+    if args.calibre_library and (args.import_only or args.import_book or args.import_metadata):
+        parser.error("--calibre-library cannot be combined with --import-* flags")
+
+    if args.accept_fuzzy and not args.calibre_library:
+        parser.error("--accept-fuzzy requires --calibre-library")
+
     # If one positional arg is given without the other, that's an error
     if (args.kfx_file is None) != (args.yjr_file is None):
         parser.error("provide both BOOK.kfx and ANNOTATIONS.yjr, or neither for bulk mode")
+
+    # --- Calibre library matching mode ---
+    if args.calibre_library:
+        sync_state = load_sync_state(script_dir)
+        run_calibre_matching(args, script_dir, sync_state, output_dir)
+        sys.exit(0)
 
     # --- Kindle device mode ---
     if args.kindle:

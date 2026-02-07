@@ -43,7 +43,27 @@ python extract_highlights.py --kindle /Volumes/Kindle --limit 5
 
 Kindle mode uses incremental sync via `.sync_state.json` — unchanged, previously successful books are skipped automatically. The sync state also serves as a book registry, recording all known paths for each book.
 
-**DRM handling**: Books that fail with DRM errors are flagged separately. Use `--import-metadata` to copy just the `.yjr` annotations, then manually pair with an unlocked `.kfx` (e.g., from Calibre) in `input/`.
+**DRM handling**: Books that fail with DRM errors are flagged separately. Use `--import-metadata` to copy just the `.yjr` annotations, then use `--calibre-library` to match them with unlocked Calibre KFX files.
+
+### Calibre library mode
+
+Match DRM-flagged books to unlocked KFX files in a Calibre library. Requires `.yjr` annotations to be imported first via `--kindle --import-metadata`.
+
+```
+# Preview matching report
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --dry-run
+
+# Process all ASIN-matched books
+python extract_highlights.py --calibre-library "/path/to/Calibre Library"
+
+# Include fuzzy title matches (shown in report but skipped by default)
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --accept-fuzzy
+
+# Process first N matched books
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --limit 5
+```
+
+Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin` in Calibre's `metadata.db`. Fuzzy title matching is available as a fallback for books without ASIN matches. Calibre KFX files are used in-place (no copying). The `calibre_library` config key provides a persistent default.
 
 ### Useful flags
 
@@ -60,10 +80,12 @@ Kindle mode uses incremental sync via `.sync_state.json` — unchanged, previous
 - `--import-metadata` — Copy only .yjr to input/pending/ (requires `--kindle`)
 - `--dry-run` — Preview what would be done without making changes
 - `--limit N` — Process at most N books (works with both Kindle and bulk modes)
+- `--calibre-library PATH` — Match DRM books to Calibre library KFX files
+- `--accept-fuzzy` — Include fuzzy title matches in Calibre mode (default: ASIN-only)
 
 ### Config file
 
-Copy `config.yaml.example` to `config.yaml` to set persistent defaults (output format, quiet mode, jobs, etc.). CLI flags always override config values. See the example file for all supported keys. The `kindle_path` key provides a persistent default for the `--kindle` flag.
+Copy `config.yaml.example` to `config.yaml` to set persistent defaults (output format, quiet mode, jobs, etc.). CLI flags always override config values. See the example file for all supported keys. The `kindle_path` and `calibre_library` keys provide persistent defaults for `--kindle` and `--calibre-library`.
 
 ## Setup
 

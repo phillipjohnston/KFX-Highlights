@@ -28,3 +28,6 @@
 
 # Path to mounted Kindle device (e.g. /Volumes/Kindle)
 # kindle_path: /Volumes/Kindle
+
+# Path to Calibre library (for matching DRM books to unlocked KFX files)
+# calibre_library: /Users/you/Calibre Library
