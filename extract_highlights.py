@@ -21,7 +21,10 @@ except ImportError:
 
 class DRMError(Exception):
     """Raised when extraction fails due to DRM protection."""
-    pass
+    def __init__(self, message, highlights=0, notes=0):
+        super().__init__(message)
+        self.highlights = highlights
+        self.notes = notes
 
 
 KNOWN_CONFIG_KEYS = {
@@ -117,6 +120,22 @@ def save_sync_state(script_dir, state):
 _SAVED_RE = re.compile(r"Saved (\d+) highlights? and (\d+) notes?")
 
 
+def _count_annotations(json_file):
+    """Count highlights and notes from a krds JSON file.
+
+    Returns (n_highlights, n_notes). Returns (0, 0) on any error.
+    """
+    try:
+        with open(json_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        ann_obj = data.get("annotation.cache.object", {})
+        nh = len(ann_obj.get("annotation.personal.highlight", []))
+        nn = len(ann_obj.get("annotation.personal.note", []))
+        return nh, nn
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return 0, 0
+
+
 def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
                  title=None, keep_json=False, fmt="html"):
     """Run the krds + extraction pipeline for a single kfx/yjr pair.
@@ -134,6 +153,10 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
 
     json_file = output_dir / (yjr_file.name + ".json")
 
+    # Count annotations from the krds JSON before extraction — this
+    # gives us counts even if the KFX extraction fails (e.g. DRM).
+    raw_highlights, raw_notes = _count_annotations(json_file)
+
     extract_cmd = [sys.executable, str(script_dir / "extract_highlights_kfxlib.py"),
                    str(json_file), str(kfx_file), "--output-dir", str(output_dir),
                    "--format", fmt]
@@ -143,7 +166,7 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
         extract_cmd.extend(["--title", title])
 
     result = subprocess.run(extract_cmd, capture_output=True, text=True)
-    n_highlights, n_notes = 0, 0
+    n_highlights, n_notes = raw_highlights, raw_notes
     if result.returncode == 0:
         if result.stdout:
             print(result.stdout, end="")
@@ -155,7 +178,8 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
         if "DRM" in (result.stderr or ""):
             if result.stderr:
                 print(result.stderr, end="", file=sys.stderr)
-            raise DRMError(f"DRM-protected: {kfx_file.name}")
+            raise DRMError(f"DRM-protected: {kfx_file.name}",
+                           highlights=raw_highlights, notes=raw_notes)
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr)
         raise subprocess.CalledProcessError(result.returncode, extract_cmd)
@@ -335,11 +359,12 @@ def _run_extraction(to_process, script_dir, output_dir, args, sync_state,
                 print(f"  -> Done ({nh} highlights, {nn} notes)")
                 _update_sync_record(sync_state, kfx, yjr, "success",
                                     highlights=nh, notes=nn)
-            except DRMError:
-                print(f"  -> DRM-PROTECTED")
+            except DRMError as e:
+                print(f"  -> DRM-PROTECTED ({e.highlights} highlights, {e.notes} notes)")
                 drm_flagged.append(kfx.name)
                 _update_sync_record(sync_state, kfx, yjr, "drm-flagged",
-                                    error="DRM-protected")
+                                    error="DRM-protected",
+                                    highlights=e.highlights, notes=e.notes)
             except subprocess.CalledProcessError as e:
                 print(f"  -> FAILED (exit code {e.returncode})")
                 failed.append(kfx.name)
@@ -361,11 +386,12 @@ def _run_extraction(to_process, script_dir, output_dir, args, sync_state,
                     print(f"  Done: {kfx.stem} ({nh} highlights, {nn} notes)")
                     _update_sync_record(sync_state, kfx, yjr, "success",
                                         highlights=nh, notes=nn)
-                except DRMError:
-                    print(f"  DRM-PROTECTED: {kfx.stem}")
+                except DRMError as e:
+                    print(f"  DRM-PROTECTED: {kfx.stem} ({e.highlights} highlights, {e.notes} notes)")
                     drm_flagged.append(kfx.name)
                     _update_sync_record(sync_state, kfx, yjr, "drm-flagged",
-                                        error="DRM-protected")
+                                        error="DRM-protected",
+                                        highlights=e.highlights, notes=e.notes)
                 except subprocess.CalledProcessError as e:
                     print(f"  FAILED: {kfx.stem} (exit code {e.returncode})")
                     failed.append(kfx.name)
@@ -659,8 +685,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                                   quiet=args.quiet, title=args.title,
                                   keep_json=args.keep_json, fmt=args.format)
             print(f"Done ({nh} highlights, {nn} notes)")
-        except DRMError:
+        except DRMError as e:
             print(f"Error: {args.kfx_file.name} is DRM-protected and cannot be processed.")
+            if e.highlights or e.notes:
+                print(f"  ({e.highlights} highlights, {e.notes} notes found in annotations)")
             print("Tip: use Calibre to create an unlocked copy, then try again.")
             sys.exit(1)
 
@@ -731,8 +759,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                                           quiet=args.quiet, keep_json=args.keep_json,
                                           fmt=args.format)
                     print(f"  -> Done ({nh} highlights, {nn} notes)")
-                except DRMError:
-                    print(f"  -> DRM-PROTECTED")
+                except DRMError as e:
+                    print(f"  -> DRM-PROTECTED ({e.highlights} highlights, {e.notes} notes)")
                     drm_flagged.append(kfx.name)
                 except subprocess.CalledProcessError as e:
                     print(f"  -> FAILED (exit code {e.returncode})")
@@ -752,8 +780,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                     try:
                         nh, nn = future.result()
                         print(f"  Done: {kfx.stem} ({nh} highlights, {nn} notes)")
-                    except DRMError:
-                        print(f"  DRM-PROTECTED: {kfx.stem}")
+                    except DRMError as e:
+                        print(f"  DRM-PROTECTED: {kfx.stem} ({e.highlights} highlights, {e.notes} notes)")
                         drm_flagged.append(kfx.name)
                     except subprocess.CalledProcessError as e:
                         print(f"  FAILED: {kfx.stem} (exit code {e.returncode})")
