@@ -60,7 +60,7 @@ def extract_text(sections, start, end):
             b = slice_end - sec_start
             parts.append(sec["content"][a:b])
         idx += 1
-    return "".join(parts).replace("\n", " ").strip()
+    return "".join(parts).strip()
 
 
 def load_navigation(kfx_path):
@@ -249,7 +249,7 @@ def generate_html(title, authors, items, output_path, year=""):
             meta_parts.append(f"Location {item['location']}")
         meta_str = " - " + " >  ".join(meta_parts) if meta_parts else ""
 
-        text = escape(item.get("text", ""))
+        text = escape(item.get("text", "")).replace("\n", "<br/>")
         if item.get("type") == "note":
             html_parts.append(f"<div class='noteHeading'>Note{meta_str}</div>")
         else:
@@ -316,7 +316,9 @@ def generate_markdown(title, authors, items, output_path, year=""):
         else:
             lines.append(f"**Highlight** - {meta_str}" if meta_str else "**Highlight**")
             lines.append("")
-            lines.append(f"> {text}")
+            # Prefix each line with > for multi-line blockquotes
+            quoted = "\n".join(f"> {line}" for line in text.split("\n"))
+            lines.append(quoted)
         lines.append("")
 
     with open(output_path, "w", encoding="utf-8") as f:
