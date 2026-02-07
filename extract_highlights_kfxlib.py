@@ -400,7 +400,7 @@ def main():
         e = int(ann["endPosition"].split(":")[1])
         # Check if this annotation is contained within the previous one
         if deduped:
-            ps, pe = deduped[-1]
+            ps, pe, _ = deduped[-1]
             if s >= ps and e <= pe:
                 continue  # fully contained, skip
             # Check if the previous one is contained within this one
