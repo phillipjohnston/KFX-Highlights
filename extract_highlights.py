@@ -22,17 +22,23 @@ def main():
         sys.exit(1)
 
     script_dir = Path(__file__).parent
+    output_dir = script_dir / "output"
+    output_dir.mkdir(exist_ok=True)
 
-    # Convert YJR to JSON using krds.py
+    # Convert YJR to JSON using krds.py, placing output in the output directory
     krds_script = script_dir / "krds.py"
-    subprocess.run([sys.executable, str(krds_script), str(yjr_file)], check=True)
+    subprocess.run(
+        [sys.executable, str(krds_script), str(yjr_file), "--output-dir", str(output_dir)],
+        check=True,
+    )
 
-    json_file = yjr_file.with_suffix(yjr_file.suffix + ".json")
+    json_file = output_dir / (yjr_file.name + ".json")
 
     # Extract highlights using the generated JSON and KFX file
     extract_script = script_dir / "extract_highlights_kfxlib.py"
     subprocess.run(
-        [sys.executable, str(extract_script), str(json_file), str(kfx_file)],
+        [sys.executable, str(extract_script), str(json_file), str(kfx_file),
+         "--output-dir", str(output_dir)],
         check=True,
     )
 

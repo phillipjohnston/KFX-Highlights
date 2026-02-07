@@ -24,6 +24,7 @@ __copyright__ = "2019, John Howell <jhowell@acm.org>"
 def main():
     parser = argparse.ArgumentParser(prog="python krds.py", description="Convert Kindle reader data store files to JSON")
     parser.add_argument("pathname", help="Pathname to be processed (.azw3f, .azw3r, .mbp1, .mbs, .yjf, .yjr)")
+    parser.add_argument("--output-dir", help="Directory for output file (default: same as input)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
@@ -38,7 +39,10 @@ def main():
 
     decoded_objects = KindleReaderDataStore(logging, binary_data).deserialize()
 
-    out_pathname = args.pathname + ".json"
+    if args.output_dir:
+        out_pathname = os.path.join(args.output_dir, os.path.basename(args.pathname) + ".json")
+    else:
+        out_pathname = args.pathname + ".json"
 
     with io.open(out_pathname, "wb" if sys.version_info[0] == 2 else "w") as outfile:
         json.dump(decoded_objects, outfile, indent=4, separators=(",", ": "))

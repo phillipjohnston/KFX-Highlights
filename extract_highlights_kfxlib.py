@@ -237,12 +237,16 @@ def generate_html(title, authors, items, output_path, year=""):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python extract_highlights_kfxlib.py <annotations.json> <book.kfx>")
-        sys.exit(1)
+    import argparse as _argparse
 
-    json_file = sys.argv[1]
-    kfx_file = sys.argv[2]
+    parser = _argparse.ArgumentParser(description="Extract highlights from KFX book")
+    parser.add_argument("json_file", help="Path to annotations JSON file")
+    parser.add_argument("kfx_file", help="Path to KFX book file")
+    parser.add_argument("--output-dir", help="Directory for output file (default: same as KFX file)")
+    args = parser.parse_args()
+
+    json_file = args.json_file
+    kfx_file = args.kfx_file
 
     with open(json_file, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -321,11 +325,16 @@ def main():
                 "type": "note",
             })
 
-    output_html = Path(kfx_file).with_suffix(".highlights.html")
+    kfx_path = Path(kfx_file)
+    output_name = kfx_path.with_suffix(".highlights.html").name
+    if args.output_dir:
+        output_html = Path(args.output_dir) / output_name
+    else:
+        output_html = kfx_path.with_suffix(".highlights.html")
     year = ""
     if getattr(meta, "issue_date", None):
         year = str(meta.issue_date).split("-")[0]
-    generate_html(meta.title or Path(kfx_file).stem, meta.authors or [], highlights, output_html, year)
+    generate_html(meta.title or kfx_path.stem, meta.authors or [], highlights, output_html, year)
     print(f"\nSaved HTML highlights to {output_html}")
 
 
