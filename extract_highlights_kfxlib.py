@@ -264,6 +264,65 @@ def generate_html(title, authors, items, output_path, year=""):
         f.write("\n".join(html_parts))
 
 
+def _format_citation_text(title, authors, year):
+    """Build an APA citation string for plain-text formats (Markdown, etc.)."""
+    parts = []
+    if authors and year:
+        parts.append(f"{authors[0]} ({year}). ")
+    elif authors:
+        parts.append(f"{authors[0]}. ")
+    elif year:
+        parts.append(f"({year}). ")
+    parts.append(f"*{title}*")
+    parts.append(" [Kindle version]. Retrieved from Amazon.com")
+    return "".join(parts)
+
+
+def generate_markdown(title, authors, items, output_path, year=""):
+    """Write highlights to a Markdown file."""
+    lines = [
+        f"# {title}",
+        "",
+    ]
+    if authors:
+        lines.append(f"**{', '.join(authors)}**")
+        lines.append("")
+    lines.append(f"Citation (APA): {_format_citation_text(title, authors, year)}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    current_section = None
+    for item in items:
+        if item.get("section") and item["section"] != current_section:
+            lines.append(f"## {item['section']}")
+            lines.append("")
+            current_section = item["section"]
+
+        meta_parts = []
+        if item.get("chapter"):
+            meta_parts.append(item["chapter"])
+        if item.get("page"):
+            meta_parts.append(f"Page {item['page']}")
+        if item.get("location") is not None:
+            meta_parts.append(f"Location {item['location']}")
+        meta_str = " > ".join(meta_parts) if meta_parts else ""
+
+        text = item.get("text", "")
+        if item.get("type") == "note":
+            lines.append(f"**Note** - {meta_str}" if meta_str else "**Note**")
+            lines.append("")
+            lines.append(text)
+        else:
+            lines.append(f"**Highlight** - {meta_str}" if meta_str else "**Highlight**")
+            lines.append("")
+            lines.append(f"> {text}")
+        lines.append("")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
 def main():
     import argparse as _argparse
 
@@ -275,6 +334,8 @@ def main():
                         help="suppress per-highlight output (show summary only)")
     parser.add_argument("--title", type=str, default=None,
                         help="override the book title in the output")
+    parser.add_argument("-f", "--format", choices=["html", "md"], default="html",
+                        help="output format (default: html)")
     args = parser.parse_args()
 
     json_file = args.json_file
@@ -361,11 +422,12 @@ def main():
             })
 
     kfx_path = Path(kfx_file)
-    output_name = kfx_path.with_suffix(".highlights.html").name
+    ext = ".highlights.md" if args.format == "md" else ".highlights.html"
+    output_name = kfx_path.with_suffix(ext).name
     if args.output_dir:
-        output_html = Path(args.output_dir) / output_name
+        output_file = Path(args.output_dir) / output_name
     else:
-        output_html = kfx_path.with_suffix(".highlights.html")
+        output_file = kfx_path.with_suffix(ext)
     year = ""
     if getattr(meta, "issue_date", None):
         year = str(meta.issue_date).split("-")[0]
@@ -374,10 +436,13 @@ def main():
     else:
         title = meta.title or clean_title(kfx_path.stem)
     authors = meta.authors or []
-    generate_html(title, authors, highlights, output_html, year)
+    if args.format == "md":
+        generate_markdown(title, authors, highlights, output_file, year)
+    else:
+        generate_html(title, authors, highlights, output_file, year)
     n_highlights = sum(1 for h in highlights if h["type"] == "highlight")
     n_notes = sum(1 for h in highlights if h["type"] == "note")
-    print(f"Saved {n_highlights} highlights and {n_notes} notes to {output_html}")
+    print(f"Saved {n_highlights} highlights and {n_notes} notes to {output_file}")
 
 
 if __name__ == "__main__":

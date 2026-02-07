@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
-                 title=None, keep_json=False):
+                 title=None, keep_json=False, fmt="html"):
     """Run the krds + extraction pipeline for a single kfx/yjr pair."""
     output_dir.mkdir(exist_ok=True)
 
@@ -21,7 +21,8 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
     json_file = output_dir / (yjr_file.name + ".json")
 
     extract_cmd = [sys.executable, str(script_dir / "extract_highlights_kfxlib.py"),
-                   str(json_file), str(kfx_file), "--output-dir", str(output_dir)]
+                   str(json_file), str(kfx_file), "--output-dir", str(output_dir),
+                   "--format", fmt]
     if quiet:
         extract_cmd.append("--quiet")
     if title:
@@ -102,6 +103,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "--keep-json", action="store_true",
         help="keep intermediate JSON files (deleted by default after success)",
     )
+    parser.add_argument(
+        "-f", "--format", choices=["html", "md"], default="html",
+        help="output format: html (default) or md (Markdown)",
+    )
 
     args = parser.parse_args()
 
@@ -121,7 +126,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
 
         process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir,
                      quiet=args.quiet, title=args.title,
-                     keep_json=args.keep_json)
+                     keep_json=args.keep_json, fmt=args.format)
 
     else:
         # Bulk mode — scan input/ for paired files
@@ -147,15 +152,16 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             print(f"{'='*60}")
 
             if args.skip_existing:
-                output_html = output_dir / kfx.with_suffix(".highlights.html").name
-                if output_html.exists():
+                ext = ".highlights.md" if args.format == "md" else ".highlights.html"
+                output_file = output_dir / kfx.with_suffix(ext).name
+                if output_file.exists():
                     print(f"  -> Skipped (output already exists)")
                     skipped.append(kfx.name)
                     continue
 
             try:
                 process_pair(kfx, yjr, script_dir, output_dir, quiet=args.quiet,
-                             keep_json=args.keep_json)
+                             keep_json=args.keep_json, fmt=args.format)
                 print(f"  -> Done")
             except subprocess.CalledProcessError as e:
                 print(f"  -> FAILED (exit code {e.returncode})")
