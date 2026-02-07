@@ -354,7 +354,7 @@ def _run_extraction(to_process, script_dir, output_dir, args, sync_state,
             print(f"{'='*60}")
             try:
                 nh, nn = process_pair(kfx, yjr, script_dir, output_dir,
-                                      quiet=args.quiet, keep_json=args.keep_json,
+                                      quiet=True, keep_json=args.keep_json,
                                       fmt=args.format)
                 print(f"  -> Done ({nh} highlights, {nn} notes)")
                 _update_sync_record(sync_state, kfx, yjr, "success",
