@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -113,9 +114,16 @@ def save_sync_state(script_dir, state):
     os.replace(tmp_path, state_path)
 
 
+_SAVED_RE = re.compile(r"Saved (\d+) highlights? and (\d+) notes?")
+
+
 def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
                  title=None, keep_json=False, fmt="html"):
-    """Run the krds + extraction pipeline for a single kfx/yjr pair."""
+    """Run the krds + extraction pipeline for a single kfx/yjr pair.
+
+    Returns (n_highlights, n_notes) parsed from the extraction output.
+    Returns (0, 0) when no highlights are found or counts can't be parsed.
+    """
     output_dir.mkdir(exist_ok=True)
 
     krds_script = script_dir / "krds.py"
@@ -135,9 +143,13 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
         extract_cmd.extend(["--title", title])
 
     result = subprocess.run(extract_cmd, capture_output=True, text=True)
+    n_highlights, n_notes = 0, 0
     if result.returncode == 0:
         if result.stdout:
             print(result.stdout, end="")
+            m = _SAVED_RE.search(result.stdout)
+            if m:
+                n_highlights, n_notes = int(m.group(1)), int(m.group(2))
     else:
         # kfxlib raises exceptions containing "DRM" for encrypted content
         if "DRM" in (result.stderr or ""):
@@ -150,6 +162,8 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
 
     if not keep_json and json_file.exists():
         json_file.unlink()
+
+    return n_highlights, n_notes
 
 
 def validate_kindle_path(kindle_path):
@@ -261,7 +275,8 @@ def import_metadata_only(yjr, pending_dir):
 
 
 def _update_sync_record(sync_state, kfx, yjr, status, error=None,
-                        local_kfx=None, local_yjr=None):
+                        local_kfx=None, local_yjr=None,
+                        highlights=None, notes=None):
     """Create or update a book's entry in the sync state.
 
     Preserves existing kindle_*_path and *_mtime fields if the kfx/yjr
@@ -292,6 +307,10 @@ def _update_sync_record(sync_state, kfx, yjr, status, error=None,
         record["local_kfx_path"] = str(local_kfx)
     if local_yjr is not None:
         record["local_yjr_path"] = str(local_yjr)
+    if highlights is not None:
+        record["highlights"] = highlights
+    if notes is not None:
+        record["notes"] = notes
 
     books[stem] = record
 
@@ -310,11 +329,12 @@ def _run_extraction(to_process, script_dir, output_dir, args, sync_state,
             print(f"[{i}/{len(to_process)}] Processing: {kfx.stem}")
             print(f"{'='*60}")
             try:
-                process_pair(kfx, yjr, script_dir, output_dir,
-                             quiet=args.quiet, keep_json=args.keep_json,
-                             fmt=args.format)
-                print(f"  -> Done")
-                _update_sync_record(sync_state, kfx, yjr, "success")
+                nh, nn = process_pair(kfx, yjr, script_dir, output_dir,
+                                      quiet=args.quiet, keep_json=args.keep_json,
+                                      fmt=args.format)
+                print(f"  -> Done ({nh} highlights, {nn} notes)")
+                _update_sync_record(sync_state, kfx, yjr, "success",
+                                    highlights=nh, notes=nn)
             except DRMError:
                 print(f"  -> DRM-PROTECTED")
                 drm_flagged.append(kfx.name)
@@ -337,9 +357,10 @@ def _run_extraction(to_process, script_dir, output_dir, args, sync_state,
             for future in as_completed(futures):
                 kfx, yjr = futures[future]
                 try:
-                    future.result()
-                    print(f"  Done: {kfx.stem}")
-                    _update_sync_record(sync_state, kfx, yjr, "success")
+                    nh, nn = future.result()
+                    print(f"  Done: {kfx.stem} ({nh} highlights, {nn} notes)")
+                    _update_sync_record(sync_state, kfx, yjr, "success",
+                                        highlights=nh, notes=nn)
                 except DRMError:
                     print(f"  DRM-PROTECTED: {kfx.stem}")
                     drm_flagged.append(kfx.name)
@@ -633,9 +654,15 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         if not args.yjr_file.is_file():
             parser.error(f"YJR file not found: {args.yjr_file}")
 
-        process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir,
-                     quiet=args.quiet, title=args.title,
-                     keep_json=args.keep_json, fmt=args.format)
+        try:
+            nh, nn = process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir,
+                                  quiet=args.quiet, title=args.title,
+                                  keep_json=args.keep_json, fmt=args.format)
+            print(f"Done ({nh} highlights, {nn} notes)")
+        except DRMError:
+            print(f"Error: {args.kfx_file.name} is DRM-protected and cannot be processed.")
+            print("Tip: use Calibre to create an unlocked copy, then try again.")
+            sys.exit(1)
 
     else:
         # Bulk mode — scan input/ for paired files
@@ -700,10 +727,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                 print(f"[{i}/{len(to_process)}] Processing: {kfx.stem}")
                 print(f"{'='*60}")
                 try:
-                    process_pair(kfx, yjr, script_dir, output_dir,
-                                 quiet=args.quiet, keep_json=args.keep_json,
-                                 fmt=args.format)
-                    print(f"  -> Done")
+                    nh, nn = process_pair(kfx, yjr, script_dir, output_dir,
+                                          quiet=args.quiet, keep_json=args.keep_json,
+                                          fmt=args.format)
+                    print(f"  -> Done ({nh} highlights, {nn} notes)")
                 except DRMError:
                     print(f"  -> DRM-PROTECTED")
                     drm_flagged.append(kfx.name)
@@ -723,8 +750,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                 for future in as_completed(futures):
                     kfx = futures[future]
                     try:
-                        future.result()
-                        print(f"  Done: {kfx.stem}")
+                        nh, nn = future.result()
+                        print(f"  Done: {kfx.stem} ({nh} highlights, {nn} notes)")
                     except DRMError:
                         print(f"  DRM-PROTECTED: {kfx.stem}")
                         drm_flagged.append(kfx.name)
