@@ -106,8 +106,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         help="keep intermediate JSON files (deleted by default after success)",
     )
     parser.add_argument(
-        "-f", "--format", choices=["html", "md"], default="html",
-        help="output format: html (default) or md (Markdown)",
+        "-f", "--format", choices=["html", "md", "json", "csv"], default="html",
+        help="output format: html (default), md, json, or csv",
     )
     parser.add_argument(
         "-j", "--jobs", type=int, default=1, metavar="N",
@@ -153,7 +153,9 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         # Filter out already-processed books if requested
         to_process = []
         skipped = []
-        ext = ".highlights.md" if args.format == "md" else ".highlights.html"
+        ext_map = {"html": ".highlights.html", "md": ".highlights.md",
+                   "json": ".highlights.json", "csv": ".highlights.csv"}
+        ext = ext_map[args.format]
         for kfx, yjr in pairs:
             if args.skip_existing:
                 output_file = output_dir / kfx.with_suffix(ext).name

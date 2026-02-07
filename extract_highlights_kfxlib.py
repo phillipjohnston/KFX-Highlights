@@ -6,6 +6,7 @@ repository) to decode the KFX container. It converts the book into a JSON
 structure with content and position information and then maps the annotation
 positions directly onto that content.
 """
+import csv
 import json
 import re
 import sys
@@ -304,6 +305,27 @@ def generate_markdown(title, authors, items, output_path, year=""):
         f.write("\n".join(lines))
 
 
+def generate_json(title, authors, items, output_path, year=""):
+    """Write highlights to a JSON file."""
+    data = {
+        "title": title,
+        "authors": authors,
+        "year": year,
+        "items": items,
+    }
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def generate_csv(title, authors, items, output_path, year=""):
+    """Write highlights to a CSV file."""
+    fields = ["type", "text", "section", "chapter", "page", "location", "creationTime"]
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(items)
+
+
 def main():
     import argparse as _argparse
 
@@ -315,8 +337,8 @@ def main():
                         help="suppress per-highlight output (show summary only)")
     parser.add_argument("--title", type=str, default=None,
                         help="override the book title in the output")
-    parser.add_argument("-f", "--format", choices=["html", "md"], default="html",
-                        help="output format (default: html)")
+    parser.add_argument("-f", "--format", choices=["html", "md", "json", "csv"],
+                        default="html", help="output format (default: html)")
     args = parser.parse_args()
 
     json_file = args.json_file
@@ -403,7 +425,9 @@ def main():
             })
 
     kfx_path = Path(kfx_file)
-    ext = ".highlights.md" if args.format == "md" else ".highlights.html"
+    ext_map = {"html": ".highlights.html", "md": ".highlights.md",
+               "json": ".highlights.json", "csv": ".highlights.csv"}
+    ext = ext_map[args.format]
     output_name = kfx_path.with_suffix(ext).name
     if args.output_dir:
         output_file = Path(args.output_dir) / output_name
@@ -417,10 +441,13 @@ def main():
     else:
         title = meta.title or clean_title(kfx_path.stem)
     authors = meta.authors or []
-    if args.format == "md":
-        generate_markdown(title, authors, highlights, output_file, year)
-    else:
-        generate_html(title, authors, highlights, output_file, year)
+    generators = {
+        "html": generate_html,
+        "md": generate_markdown,
+        "json": generate_json,
+        "csv": generate_csv,
+    }
+    generators[args.format](title, authors, highlights, output_file, year)
     n_highlights = sum(1 for h in highlights if h["type"] == "highlight")
     n_notes = sum(1 for h in highlights if h["type"] == "note")
     print(f"Saved {n_highlights} highlights and {n_notes} notes to {output_file}")
