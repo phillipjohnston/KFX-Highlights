@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 
-def process_pair(kfx_file, yjr_file, script_dir, output_dir):
+def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False):
     """Run the krds + extraction pipeline for a single kfx/yjr pair."""
     output_dir.mkdir(exist_ok=True)
 
@@ -19,12 +19,11 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir):
 
     json_file = output_dir / (yjr_file.name + ".json")
 
-    extract_script = script_dir / "extract_highlights_kfxlib.py"
-    subprocess.run(
-        [sys.executable, str(extract_script), str(json_file), str(kfx_file),
-         "--output-dir", str(output_dir)],
-        check=True,
-    )
+    extract_cmd = [sys.executable, str(script_dir / "extract_highlights_kfxlib.py"),
+                   str(json_file), str(kfx_file), "--output-dir", str(output_dir)]
+    if quiet:
+        extract_cmd.append("--quiet")
+    subprocess.run(extract_cmd, check=True)
 
 
 def find_pairs(input_dir):
@@ -85,6 +84,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "--skip-existing", action="store_true",
         help="skip books whose output HTML already exists (bulk mode only)",
     )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="suppress per-highlight console output (show summary only)",
+    )
 
     args = parser.parse_args()
 
@@ -102,7 +105,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         if not args.yjr_file.is_file():
             parser.error(f"YJR file not found: {args.yjr_file}")
 
-        process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir)
+        process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir,
+                     quiet=args.quiet)
 
     else:
         # Bulk mode — scan input/ for paired files
@@ -135,7 +139,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                     continue
 
             try:
-                process_pair(kfx, yjr, script_dir, output_dir)
+                process_pair(kfx, yjr, script_dir, output_dir, quiet=args.quiet)
                 print(f"  -> Done")
             except subprocess.CalledProcessError as e:
                 print(f"  -> FAILED (exit code {e.returncode})")

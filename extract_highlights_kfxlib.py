@@ -243,6 +243,8 @@ def main():
     parser.add_argument("json_file", help="Path to annotations JSON file")
     parser.add_argument("kfx_file", help="Path to KFX book file")
     parser.add_argument("--output-dir", help="Directory for output file (default: same as KFX file)")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="suppress per-highlight output (show summary only)")
     args = parser.parse_args()
 
     json_file = args.json_file
@@ -295,16 +297,19 @@ def main():
         notes_by_end.setdefault(pos, []).append(n["note"])
 
     annotations.sort(key=lambda a: int(a["startPosition"].split(":")[1]))
-    print(f"Found {len(annotations)} highlights:\n{'='*60}")
+    quiet = args.quiet
+    if not quiet:
+        print(f"Found {len(annotations)} highlights:\n{'='*60}")
     for i, ann in enumerate(annotations, 1):
         start = int(ann["startPosition"].split(":")[1])
         end = int(ann["endPosition"].split(":")[1])
         text = extract_text(sections, start, end)
         page = page_for_pid(start)
         section, chapter = find_section(start)
-        print(f"\nHighlight #{i}")
-        print(f"Created: {ann['creationTime']}")
-        print(f"Text: {text}\n{'-'*60}")
+        if not quiet:
+            print(f"\nHighlight #{i}")
+            print(f"Created: {ann['creationTime']}")
+            print(f"Text: {text}\n{'-'*60}")
         highlights.append({
             "creationTime": ann["creationTime"],
             "text": text,
@@ -334,8 +339,12 @@ def main():
     year = ""
     if getattr(meta, "issue_date", None):
         year = str(meta.issue_date).split("-")[0]
-    generate_html(meta.title or kfx_path.stem, meta.authors or [], highlights, output_html, year)
-    print(f"\nSaved HTML highlights to {output_html}")
+    title = meta.title or kfx_path.stem
+    authors = meta.authors or []
+    generate_html(title, authors, highlights, output_html, year)
+    n_highlights = sum(1 for h in highlights if h["type"] == "highlight")
+    n_notes = sum(1 for h in highlights if h["type"] == "note")
+    print(f"Saved {n_highlights} highlights and {n_notes} notes to {output_html}")
 
 
 if __name__ == "__main__":
