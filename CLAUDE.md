@@ -83,6 +83,21 @@ Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin
 - `--calibre-library PATH` — Match DRM books to Calibre library KFX files
 - `--accept-fuzzy` — Include fuzzy title matches in Calibre mode (default: ASIN-only)
 
+### Re-exporting in a different format
+
+The sync state (`.sync_state.json`) tracks processing status independently of output format. If you've already processed books via `--kindle` or `--calibre-library` and want to re-export in a different format (e.g. markdown after initially generating HTML), the sync state will skip them as "unchanged, previously successful."
+
+To regenerate in a different format:
+
+- **If files are in `input/`**: Use bulk mode, which doesn't consult sync state:
+  ```
+  python extract_highlights.py -f md
+  ```
+- **If using `--kindle` mode**: Either run bulk mode against `input/` (if files were imported), or delete `.sync_state.json` to force reprocessing.
+- **If using `--calibre-library` mode**: Same as above — use bulk mode or clear the sync state.
+
+Note: `--skip-existing` (bulk mode only) checks for the output file matching the *current* format, so it won't skip books that only have HTML output when you request markdown.
+
 ### Config file
 
 Copy `config.yaml.example` to `config.yaml` to set persistent defaults (output format, quiet mode, jobs, etc.). CLI flags always override config values. See the example file for all supported keys. The `kindle_path` and `calibre_library` keys provide persistent defaults for `--kindle` and `--calibre-library`.
