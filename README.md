@@ -92,7 +92,12 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library"
 
 # Include fuzzy title matches (shown in report but skipped by default)
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --accept-fuzzy
+
+# Match ALL synced books, not just DRM-flagged ones
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --all-books
 ```
+
+By default, only DRM-flagged books are matched. Use `--all-books` to also include books that were already successfully processed from the Kindle — useful if you want to re-extract using the Calibre KFX version instead.
 
 The matching report shows four categories: ASIN-matched with KFX (processable), matched but no KFX format in Calibre, matched with KFX but no `.yjr` imported yet, and unmatched. You can set a persistent default in `config.yaml`:
 
@@ -141,6 +146,7 @@ Output goes to `output/`.
 | `--import-metadata` | Copy only `.yjr` to `input/pending/` (for DRM books) |
 | `--calibre-library PATH` | Match DRM books to Calibre library KFX files |
 | `--accept-fuzzy` | Include fuzzy title matches in Calibre mode |
+| `--all-books` | Match all synced books to Calibre, not just DRM-flagged |
 | `--dry-run` | Preview what would be done without making changes |
 | `--limit N` | Process at most N books |
 

@@ -61,9 +61,12 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --acce
 
 # Process first N matched books
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --limit 5
+
+# Match ALL synced books (not just DRM-flagged) to Calibre KFX files
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --all-books
 ```
 
-Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin` in Calibre's `metadata.db`. Fuzzy title matching is available as a fallback for books without ASIN matches. Calibre KFX files are used in-place (no copying). The `calibre_library` config key provides a persistent default.
+Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin` in Calibre's `metadata.db`. Fuzzy title matching is available as a fallback for books without ASIN matches. Calibre KFX files are used in-place (no copying). The `calibre_library` config key provides a persistent default. Use `--all-books` to include successfully processed books (not just DRM-flagged) in the matching.
 
 ### Useful flags
 
@@ -82,6 +85,7 @@ Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin
 - `--limit N` — Process at most N books (works with both Kindle and bulk modes)
 - `--calibre-library PATH` — Match DRM books to Calibre library KFX files
 - `--accept-fuzzy` — Include fuzzy title matches in Calibre mode (default: ASIN-only)
+- `--all-books` — Match all synced books to Calibre, not just DRM-flagged (requires `--calibre-library`)
 
 ### Re-exporting in a different format
 

@@ -556,6 +556,7 @@ def find_yjr_for_stem(stem, sync_state, script_dir):
     Search order:
     1. local_yjr_path from sync state (set by prior --import-metadata)
     2. Scan input/pending/ by stem prefix match
+    3. kindle_yjr_path from sync state (on-device path)
 
     Returns Path or None.
     """
@@ -576,11 +577,22 @@ def find_yjr_for_stem(stem, sync_state, script_dir):
             if yjr.stem.startswith(stem):
                 return yjr
 
+    # Fallback: on-device .yjr path (e.g. for --all-books remapping)
+    kindle_yjr = record.get("kindle_yjr_path")
+    if kindle_yjr:
+        p = Path(kindle_yjr)
+        if p.is_file():
+            return p
+
     return None
 
 
-def match_calibre_books(sync_state, calibre_path, script_dir):
-    """Match DRM-flagged books from sync state to Calibre library entries.
+def match_calibre_books(sync_state, calibre_path, script_dir, all_books=False):
+    """Match books from sync state to Calibre library entries.
+
+    By default, only considers DRM-flagged/metadata-only books. When
+    all_books=True, also includes successfully processed books so they
+    can be remapped to Calibre KFX files.
 
     Returns (matched, matched_no_kfx, unmatched, no_yjr) where:
     - matched: [{stem, asin, calibre_title, kfx_path, yjr_path, fuzzy, score}]
@@ -591,16 +603,22 @@ def match_calibre_books(sync_state, calibre_path, script_dir):
     asin_to_kfx, asin_to_title, title_index = build_calibre_index(calibre_path)
 
     books = sync_state.get("books", {})
-    drm_statuses = {"drm-flagged", "metadata-only"}
-    drm_books = {stem: record for stem, record in books.items()
-                 if record.get("status") in drm_statuses}
+    if all_books:
+        eligible_statuses = {"drm-flagged", "metadata-only", "success",
+                             "imported", "failed"}
+        candidate_books = {stem: record for stem, record in books.items()
+                          if record.get("status") in eligible_statuses}
+    else:
+        candidate_books = {stem: record for stem, record in books.items()
+                          if record.get("status") in {"drm-flagged",
+                                                       "metadata-only"}}
 
     matched = []
     matched_no_kfx = []
     unmatched = []
     no_yjr = []
 
-    for stem, record in sorted(drm_books.items()):
+    for stem, record in sorted(candidate_books.items()):
         asin = extract_asin(stem)
 
         # Try ASIN match first
@@ -671,8 +689,9 @@ def match_calibre_books(sync_state, calibre_path, script_dir):
 def run_calibre_matching(args, script_dir, sync_state, output_dir):
     """Top-level handler for --calibre-library mode.
 
-    Matches DRM-flagged books to Calibre library, prints a report,
-    and processes matched books.
+    Matches books to Calibre library, prints a report, and processes
+    matched books. By default only DRM-flagged books; with --all-books
+    also includes successfully processed and other synced books.
     """
     calibre_path = args.calibre_library
 
@@ -681,12 +700,17 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
         sys.exit(1)
 
     matched, matched_no_kfx, unmatched, no_yjr = match_calibre_books(
-        sync_state, calibre_path, script_dir)
+        sync_state, calibre_path, script_dir, all_books=args.all_books)
 
-    # Count DRM books for context
+    # Count candidate books for context
     books = sync_state.get("books", {})
-    drm_statuses = {"drm-flagged", "metadata-only"}
-    drm_count = sum(1 for r in books.values() if r.get("status") in drm_statuses)
+    if args.all_books:
+        eligible_statuses = {"drm-flagged", "metadata-only", "success",
+                             "imported", "failed"}
+    else:
+        eligible_statuses = {"drm-flagged", "metadata-only"}
+    candidate_count = sum(1 for r in books.values()
+                         if r.get("status") in eligible_statuses)
 
     # Separate ASIN and fuzzy matches for reporting
     asin_matched = [m for m in matched if not m["fuzzy"]]
@@ -694,7 +718,10 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
 
     # --- Report ---
     print(f"\nCalibre library: {calibre_path}")
-    print(f"DRM-flagged books in sync state: {drm_count}\n")
+    if args.all_books:
+        print(f"Eligible books in sync state: {candidate_count} (--all-books)\n")
+    else:
+        print(f"DRM-flagged books in sync state: {candidate_count}\n")
 
     print(f"ASIN-matched with KFX: {len(asin_matched)}")
     if not args.quiet:
@@ -930,6 +957,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "--accept-fuzzy", action="store_true",
         help="include fuzzy title matches when using --calibre-library (default: ASIN-only)",
     )
+    parser.add_argument(
+        "--all-books", action="store_true",
+        help="match all synced books to Calibre, not just DRM-flagged (requires --calibre-library)",
+    )
 
     script_dir = Path(__file__).parent
     config = load_config(script_dir)
@@ -979,6 +1010,9 @@ must start with the .kfx stem (Kindle's default naming convention).""",
 
     if args.accept_fuzzy and not args.calibre_library:
         parser.error("--accept-fuzzy requires --calibre-library")
+
+    if args.all_books and not args.calibre_library:
+        parser.error("--all-books requires --calibre-library")
 
     # If one positional arg is given without the other, that's an error
     if (args.kfx_file is None) != (args.yjr_file is None):
