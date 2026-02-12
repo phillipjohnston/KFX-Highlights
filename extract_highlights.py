@@ -700,11 +700,13 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
         sys.exit(1)
 
     matched, matched_no_kfx, unmatched, no_yjr = match_calibre_books(
-        sync_state, calibre_path, script_dir, all_books=args.all_books)
+        sync_state, calibre_path, script_dir,
+        all_books=args.all_books or args.reprocess)
 
     # Count candidate books for context
     books = sync_state.get("books", {})
-    if args.all_books:
+    include_all = args.all_books or args.reprocess
+    if include_all:
         eligible_statuses = {"drm-flagged", "metadata-only", "success",
                              "imported", "failed"}
     else:
@@ -718,8 +720,9 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
 
     # --- Report ---
     print(f"\nCalibre library: {calibre_path}")
-    if args.all_books:
-        print(f"Eligible books in sync state: {candidate_count} (--all-books)\n")
+    if include_all:
+        label = "--reprocess" if args.reprocess else "--all-books"
+        print(f"Eligible books in sync state: {candidate_count} ({label})\n")
     else:
         print(f"DRM-flagged books in sync state: {candidate_count}\n")
 
@@ -961,6 +964,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         "--all-books", action="store_true",
         help="match all synced books to Calibre, not just DRM-flagged (requires --calibre-library)",
     )
+    parser.add_argument(
+        "--reprocess", action="store_true",
+        help="reprocess previously successful books (bypass sync state skip logic)",
+    )
 
     script_dir = Path(__file__).parent
     config = load_config(script_dir)
@@ -1038,7 +1045,10 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             print(f"  {kfx.name}")
 
         # Incremental sync: skip unchanged, previously successful books
-        pairs, unchanged_count = filter_new_or_changed(pairs, sync_state)
+        if args.reprocess:
+            unchanged_count = 0
+        else:
+            pairs, unchanged_count = filter_new_or_changed(pairs, sync_state)
 
         if unchanged_count:
             print(f"\n  Skipping {unchanged_count} unchanged, previously processed book(s)")

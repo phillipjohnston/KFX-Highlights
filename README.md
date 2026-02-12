@@ -147,6 +147,7 @@ Output goes to `output/`.
 | `--calibre-library PATH` | Match DRM books to Calibre library KFX files |
 | `--accept-fuzzy` | Include fuzzy title matches in Calibre mode |
 | `--all-books` | Match all synced books to Calibre, not just DRM-flagged |
+| `--reprocess` | Reprocess previously successful books (bypass sync state skip logic) |
 | `--dry-run` | Preview what would be done without making changes |
 | `--limit N` | Process at most N books |
 
