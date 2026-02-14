@@ -480,9 +480,24 @@ def main():
     output_name = safe_title + ext
 
     if args.output_dir:
-        output_file = Path(args.output_dir) / output_name
+        output_dir = Path(args.output_dir)
     else:
-        output_file = kfx_path.parent / output_name
+        output_dir = kfx_path.parent
+
+    output_file = output_dir / output_name
+
+    # Handle name collisions by appending -2, -3, etc.
+    if output_file.exists():
+        original_name = output_name
+        counter = 2
+        while True:
+            collision_name = f"{safe_title}-{counter}{ext}"
+            output_file = output_dir / collision_name
+            if not output_file.exists():
+                if not args.quiet:
+                    print(f"Note: {original_name} exists, using {collision_name}", file=sys.stderr)
+                break
+            counter += 1
     authors = meta.authors or []
     generators = {
         "html": generate_html,
