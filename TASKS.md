@@ -47,6 +47,50 @@ This mismatch means `--skip-existing` checks for a different filename than what 
 
 For reliable incremental processing, use `--kindle` mode which maintains a sync state file (`.sync_state.json`) that tracks processed books by their actual metadata rather than filenames.
 
+**Proposed Solutions for Discussion**:
+
+**Option A: Add sync state tracking to bulk mode**
+- When collision detection triggers (e.g., creating `Meditations-2.highlights.html`), record the mapping in `.sync_state.json`
+- Store: `kfx_stem → actual_output_filename`
+- Use this mapping to make `--skip-existing` work correctly in bulk mode
+
+*Pros:*
+- Fixes the `--skip-existing` issue
+- Creates historical record of which KFX file produced which output
+- Helps users understand collision-numbered filenames
+
+*Challenges:*
+- Bulk mode is intentionally stateless; adding sync state changes its design philosophy
+- Sync state is currently keyed by KFX stem, but bulk mode could process the same KFX from different locations
+- Output filename depends on metadata - still need to read book to determine output path
+- Collision numbers aren't stable if files are deleted (deleting `Meditations-2.html` means next run might assign that number to a different book)
+
+**Option B: Smart collision detection with metadata comparison**
+- Store identifying metadata in output files (KFX stem, ASIN, or hash)
+  - HTML: meta tags in `<head>`
+  - JSON: top-level field
+  - Markdown: YAML frontmatter
+  - CSV: header comment
+- On collision, check if existing file was created from the *same* source KFX
+- If same source: overwrite/update the existing file
+- If different source: use collision numbering
+
+*Pros:*
+- Re-running the same book updates its file instead of creating duplicates
+- Different books with same title get unique numbered files
+- Works without sync state - self-contained in output files
+- Smaller change, doesn't affect bulk mode's stateless design
+
+*Challenges:*
+- Requires reading and parsing existing output files during collision detection
+- Need to handle all four output formats differently
+- Older output files without metadata would need migration or special handling
+
+**Option C: Hybrid approach**
+- Implement Option B (metadata in output files) for collision resolution
+- Optionally use sync state in bulk mode for performance (cache metadata lookups)
+- Make sync state usage opt-in for bulk mode via flag
+
 ---
 
 ## Future Enhancements
