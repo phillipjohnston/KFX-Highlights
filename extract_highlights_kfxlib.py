@@ -68,7 +68,7 @@ def extract_text(sections, start, end):
             b = slice_end - sec_start
             parts.append(sec["content"][a:b])
         idx += 1
-    return "".join(parts).strip()
+    return "\n".join(parts).strip()
 
 
 def load_navigation(kfx_path):
