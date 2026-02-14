@@ -465,11 +465,7 @@ def main():
     ext_map = {"html": ".highlights.html", "md": ".highlights.md",
                "json": ".highlights.json", "csv": ".highlights.csv"}
     ext = ext_map[args.format]
-    output_name = kfx_path.with_suffix(ext).name
-    if args.output_dir:
-        output_file = Path(args.output_dir) / output_name
-    else:
-        output_file = kfx_path.with_suffix(ext)
+
     year = ""
     if getattr(meta, "issue_date", None):
         year = str(meta.issue_date).split("-")[0]
@@ -477,6 +473,16 @@ def main():
         title = args.title
     else:
         title = meta.title or clean_title(kfx_path.stem)
+
+    # Use the actual title for the output filename to avoid truncation collisions
+    safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)
+    safe_title = re.sub(r'\s+', ' ', safe_title).strip()
+    output_name = safe_title + ext
+
+    if args.output_dir:
+        output_file = Path(args.output_dir) / output_name
+    else:
+        output_file = kfx_path.parent / output_name
     authors = meta.authors or []
     generators = {
         "html": generate_html,
