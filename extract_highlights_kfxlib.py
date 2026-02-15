@@ -402,7 +402,7 @@ def main():
     highlights = []
     notes_by_end = {}
     for n in notes:
-        pos = int(n["startPosition"].split(":")[1])
+        pos = int(n["endPosition"].split(":")[1])
         notes_by_end.setdefault(pos, []).append(n["note"])
 
     annotations.sort(key=lambda a: int(a["startPosition"].split(":")[1]))
