@@ -31,3 +31,6 @@
 
 # Path to Calibre library (for matching DRM books to unlocked KFX files)
 # calibre_library: /Users/you/Calibre Library
+
+# Note: You can set both kindle_path and calibre_library here. They serve as
+# defaults for different operation modes and won't conflict.

@@ -106,6 +106,14 @@ Note: `--skip-existing` (bulk mode only) checks for the output file matching the
 
 Copy `config.yaml.example` to `config.yaml` to set persistent defaults (output format, quiet mode, jobs, etc.). CLI flags always override config values. See the example file for all supported keys. The `kindle_path` and `calibre_library` keys provide persistent defaults for `--kindle` and `--calibre-library`.
 
+**Note on operation modes**: You can safely set both `kindle_path` and `calibre_library` in your config. The script determines which mode to use based on **explicit CLI flags**, not config values:
+
+- **No flags** → Bulk mode (processes files in `input/`)
+- **`--kindle`** → Kindle device mode (uses `kindle_path` from config if no path specified)
+- **`--calibre-library`** → Calibre matching mode (uses `calibre_library` from config if no path specified)
+
+This allows you to set both paths in your config and switch modes by simply adding the appropriate flag.
+
 ## Setup
 
 ```

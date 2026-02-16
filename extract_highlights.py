@@ -1009,8 +1009,13 @@ must start with the .kfx stem (Kindle's default naming convention).""",
     if args.calibre_library and (args.kfx_file or args.yjr_file):
         parser.error("--calibre-library cannot be combined with positional kfx/yjr arguments")
 
+    # Note: Having both kindle_path and calibre_library in config is fine —
+    # they're defaults for different modes. Only error if the user explicitly
+    # passes both flags on the CLI, which would be ambiguous.
+    # We detect explicit CLI usage by checking sys.argv.
     if args.calibre_library and args.kindle:
-        parser.error("--calibre-library cannot be combined with --kindle")
+        if "--calibre-library" in sys.argv and "--kindle" in sys.argv:
+            parser.error("--calibre-library cannot be combined with --kindle")
 
     if args.calibre_library and (args.import_only or args.import_book or args.import_metadata):
         parser.error("--calibre-library cannot be combined with --import-* flags")
@@ -1026,13 +1031,17 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         parser.error("provide both BOOK.kfx and ANNOTATIONS.yjr, or neither for bulk mode")
 
     # --- Calibre library matching mode ---
-    if args.calibre_library:
+    # Only enter Calibre mode if explicitly requested via CLI flag, not just config default
+    calibre_mode = "--calibre-library" in sys.argv
+    kindle_mode = "--kindle" in sys.argv
+
+    if calibre_mode:
         sync_state = load_sync_state(script_dir)
         run_calibre_matching(args, script_dir, sync_state, output_dir)
         sys.exit(0)
 
     # --- Kindle device mode ---
-    if args.kindle:
+    if kindle_mode:
         sync_state = load_sync_state(script_dir)
         pairs = find_kindle_pairs(args.kindle)
 
