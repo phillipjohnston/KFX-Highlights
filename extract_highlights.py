@@ -928,8 +928,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         help="number of books to process in parallel (default: 1, 0 = CPU count)",
     )
     parser.add_argument(
-        "--kindle", type=Path, default=None, metavar="PATH",
-        help="path to mounted Kindle device (e.g. /Volumes/Kindle)",
+        "--kindle", type=Path, nargs="?", const="USE_CONFIG", default=None, metavar="PATH",
+        help="path to mounted Kindle device (e.g. /Volumes/Kindle); uses config default if no path specified",
     )
     import_group = parser.add_mutually_exclusive_group()
     import_group.add_argument(
@@ -953,8 +953,8 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         help="process at most N books (for testing)",
     )
     parser.add_argument(
-        "--calibre-library", type=Path, default=None, metavar="PATH",
-        help="path to Calibre library (match DRM books to unlocked Calibre KFX files)",
+        "--calibre-library", type=Path, nargs="?", const="USE_CONFIG", default=None, metavar="PATH",
+        help="path to Calibre library (match DRM books to unlocked Calibre KFX files); uses config default if no path specified",
     )
     parser.add_argument(
         "--accept-fuzzy", action="store_true",
@@ -994,6 +994,19 @@ must start with the .kfx stem (Kindle's default naming convention).""",
 
     args = parser.parse_args()
 
+    # Resolve USE_CONFIG markers for --kindle and --calibre-library
+    if args.kindle == Path("USE_CONFIG"):
+        if "kindle_path" in config:
+            args.kindle = Path(config["kindle_path"])
+        else:
+            parser.error("--kindle requires a path (none found in config)")
+
+    if args.calibre_library == Path("USE_CONFIG"):
+        if "calibre_library" in config:
+            args.calibre_library = Path(config["calibre_library"])
+        else:
+            parser.error("--calibre-library requires a path (none found in config)")
+
     if config and not args.quiet:
         print(f"Loaded config from {script_dir / 'config.yaml'}")
 
@@ -1017,13 +1030,13 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         if "--calibre-library" in sys.argv and "--kindle" in sys.argv:
             parser.error("--calibre-library cannot be combined with --kindle")
 
-    if args.calibre_library and (args.import_only or args.import_book or args.import_metadata):
+    if "--calibre-library" in sys.argv and (args.import_only or args.import_book or args.import_metadata):
         parser.error("--calibre-library cannot be combined with --import-* flags")
 
-    if args.accept_fuzzy and not args.calibre_library:
+    if args.accept_fuzzy and "--calibre-library" not in sys.argv:
         parser.error("--accept-fuzzy requires --calibre-library")
 
-    if args.all_books and not args.calibre_library:
+    if args.all_books and "--calibre-library" not in sys.argv:
         parser.error("--all-books requires --calibre-library")
 
     # If one positional arg is given without the other, that's an error
