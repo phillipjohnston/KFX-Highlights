@@ -4,3 +4,4 @@ config.yaml
 .sync_state.json
 .DS_Store
 __pycache__
+styles.css
