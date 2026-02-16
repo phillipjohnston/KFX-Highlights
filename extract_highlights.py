@@ -123,6 +123,37 @@ def save_sync_state(script_dir, state):
 _SAVED_RE = re.compile(r"Saved (\d+) highlights? and (\d+) notes?")
 _ASIN_RE = re.compile(r'_([A-Z0-9]{10,})$')
 
+# Book file extensions and their annotation sidecar extensions (in preference order).
+# For AZW3, .azw3r (highlights) is preferred over .azw3f (bookmarks/reading state).
+_BOOK_FORMATS = {
+    ".kfx": [".yjr"],
+    ".azw3": [".azw3r", ".azw3f"],
+}
+
+
+def find_calibre_debug():
+    """Locate the calibre-debug executable.
+
+    Checks PATH first, then common installation locations.
+    Returns the path string, or None if not found.
+    """
+    path = shutil.which("calibre-debug")
+    if path:
+        return path
+
+    # Common locations
+    candidates = [
+        "/Applications/calibre.app/Contents/MacOS/calibre-debug",
+        os.path.expanduser("~/Applications/calibre.app/Contents/MacOS/calibre-debug"),
+        "/usr/bin/calibre-debug",
+        "/usr/local/bin/calibre-debug",
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+
+    return None
+
 
 def extract_asin(stem):
     """Extract ASIN from Kindle stem like 'Design Patte~ng Series)_B000SEIBB8'."""
@@ -158,9 +189,157 @@ def _count_annotations(json_file):
         return 0, 0
 
 
-def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
+def _is_azw3(book_file):
+    """Check if a book file is AZW3 format (vs KFX)."""
+    return Path(book_file).suffix.lower() == ".azw3"
+
+
+def _format_azw3_output(result_json, book_file, output_dir, fmt, title=None, quiet=False):
+    """Format AZW3 extraction results into the requested output format.
+
+    The AZW3 extractor outputs JSON with {title, authors, year, items}.
+    This function writes the formatted output file and returns (n_highlights, n_notes).
+    """
+    data = json.loads(result_json)
+    items = data.get("items", [])
+    book_title = title or data.get("title", "") or Path(book_file).stem
+    authors = data.get("authors", [])
+    year = data.get("year", "")
+
+    n_highlights = sum(1 for i in items if i["type"] == "highlight")
+    n_notes = sum(1 for i in items if i["type"] == "note")
+
+    if not items:
+        return 0, 0
+
+    # Formatting is handled inline here rather than importing from
+    # extract_highlights_kfxlib.py, which has kfxlib imports at module level
+    # that would fail outside the kfxlib environment.
+    from html import escape
+    import csv as csv_mod
+
+    ext_map = {"html": ".highlights.html", "md": ".highlights.md",
+               "json": ".highlights.json", "csv": ".highlights.csv"}
+    ext = ext_map[fmt]
+
+    safe_title = re.sub(r'[<>:"/\\|?*]', '_', book_title)
+    safe_title = re.sub(r'\s+', ' ', safe_title).strip()
+    output_name = safe_title + ext
+    output_file = output_dir / output_name
+
+    # Handle name collisions
+    if output_file.exists():
+        original_name = output_name
+        counter = 2
+        while True:
+            collision_name = f"{safe_title}-{counter}{ext}"
+            output_file = output_dir / collision_name
+            if not output_file.exists():
+                if not quiet:
+                    print(f"Note: {original_name} exists, using {collision_name}",
+                          file=sys.stderr)
+                break
+            counter += 1
+
+    if fmt == "json":
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump({"title": book_title, "authors": authors,
+                        "year": year, "items": items},
+                       f, indent=2, ensure_ascii=False)
+    elif fmt == "csv":
+        fields = ["type", "text", "section", "chapter", "page", "location",
+                   "creationTime"]
+        with open(output_file, "w", encoding="utf-8", newline="") as f:
+            writer = csv_mod.DictWriter(f, fieldnames=fields,
+                                        extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(items)
+    elif fmt == "md":
+        lines = [f"# {book_title}", ""]
+        if authors:
+            lines.append(f"**{', '.join(authors)}**")
+            lines.append("")
+        lines.extend(["---", ""])
+        current_section = None
+        for item in items:
+            if item.get("section") and item["section"] != current_section:
+                lines.append(f"## {item['section']}")
+                lines.append("")
+                current_section = item["section"]
+            meta_parts = []
+            if item.get("page"):
+                meta_parts.append(f"Page {item['page']}")
+            if item.get("location") is not None:
+                meta_parts.append(f"Location {item['location']}")
+            meta_str = " > ".join(meta_parts) if meta_parts else ""
+            text = item.get("text", "")
+            if item.get("type") == "note":
+                lines.append(f"**Note** - {meta_str}" if meta_str else "**Note**")
+                lines.append("")
+                lines.append(text)
+            else:
+                lines.append(f"**Highlight** - {meta_str}" if meta_str
+                             else "**Highlight**")
+                lines.append("")
+                quoted = "\n".join(f"> {line}" for line in text.split("\n"))
+                lines.append(quoted)
+            lines.append("")
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+    else:  # html
+        css_path = Path(__file__).parent / "highlights.css"
+        css = css_path.read_text(encoding="utf-8") if css_path.is_file() else ""
+        style = f"<style type=\"text/css\">\n{css}</style>"
+        html_parts = [
+            "<?xml version='1.0' encoding='UTF-8' ?>",
+            "<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.0 Strict//EN'",
+            "  'http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd'>",
+            "<html xmlns='http://www.w3.org/TR/1999/REC-html-in-xml' "
+            "xml:lang='en' lang='en'>",
+            "<head>", "<meta charset='UTF-8' />", style,
+            "<title></title>", "</head>", "<body>",
+            "<div class='bodyContainer'>",
+            "<div class='notebookFor'>Notebook for</div>",
+            f"<div class='bookTitle'>{escape(book_title)}</div>",
+            f"<div class='authors'>{escape(', '.join(authors))}</div>",
+            "<hr />",
+        ]
+        current_section = None
+        for item in items:
+            if item.get("section") and item["section"] != current_section:
+                html_parts.append(
+                    f"<div class='sectionHeading'>"
+                    f"{escape(item['section'])}</div>")
+                current_section = item["section"]
+            meta_parts = []
+            if item.get("page"):
+                meta_parts.append(f"Page {item['page']}")
+            if item.get("location") is not None:
+                meta_parts.append(f"Location {item['location']}")
+            meta_str = (" - " + " >  ".join(meta_parts)) if meta_parts else ""
+            text = escape(item.get("text", "")).replace("\n", "<br/>")
+            if item.get("type") == "note":
+                html_parts.append(
+                    f"<div class='noteHeading'>Note{meta_str}</div>")
+            else:
+                html_parts.append(
+                    f"<div class='noteHeading'>Highlight "
+                    f"(<span class='highlight_yellow'>yellow</span>)"
+                    f"{meta_str}</div>")
+            html_parts.append(f"<div class='noteText'>{text}</div>")
+        html_parts.extend(["</div>", "</body>", "</html>"])
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(html_parts))
+
+    print(f"Saved {n_highlights} highlights and {n_notes} notes to {output_file}")
+    return n_highlights, n_notes
+
+
+def process_pair(book_file, annotation_file, script_dir, output_dir, quiet=False,
                  title=None, keep_json=False, fmt="html"):
-    """Run the krds + extraction pipeline for a single kfx/yjr pair.
+    """Run the krds + extraction pipeline for a single book/annotation pair.
+
+    Supports both KFX (.kfx + .yjr) and AZW3 (.azw3 + .azw3r/.azw3f) formats.
 
     Returns (n_highlights, n_notes) parsed from the extraction output.
     Returns (0, 0) when no highlights are found or counts can't be parsed.
@@ -169,42 +348,83 @@ def process_pair(kfx_file, yjr_file, script_dir, output_dir, quiet=False,
 
     krds_script = script_dir / "krds.py"
     subprocess.run(
-        [sys.executable, str(krds_script), str(yjr_file), "--output-dir", str(output_dir)],
+        [sys.executable, str(krds_script), str(annotation_file),
+         "--output-dir", str(output_dir)],
         check=True,
     )
 
-    json_file = output_dir / (yjr_file.name + ".json")
+    json_file = output_dir / (annotation_file.name + ".json")
 
     # Count annotations from the krds JSON before extraction — this
-    # gives us counts even if the KFX extraction fails (e.g. DRM).
+    # gives us counts even if the book extraction fails (e.g. DRM).
     raw_highlights, raw_notes = _count_annotations(json_file)
 
-    extract_cmd = [sys.executable, str(script_dir / "extract_highlights_kfxlib.py"),
-                   str(json_file), str(kfx_file), "--output-dir", str(output_dir),
-                   "--format", fmt]
-    if quiet:
-        extract_cmd.append("--quiet")
-    if title:
-        extract_cmd.extend(["--title", title])
+    if _is_azw3(book_file):
+        # AZW3 path: use calibre-debug to run the AZW3 extractor
+        calibre_debug = find_calibre_debug()
+        if not calibre_debug:
+            print("Error: calibre-debug not found. Install Calibre or add it to PATH.",
+                  file=sys.stderr)
+            raise subprocess.CalledProcessError(1, ["calibre-debug"])
 
-    result = subprocess.run(extract_cmd, capture_output=True, text=True)
-    n_highlights, n_notes = raw_highlights, raw_notes
-    if result.returncode == 0:
-        if result.stdout:
-            print(result.stdout, end="")
-            m = _SAVED_RE.search(result.stdout)
-            if m:
-                n_highlights, n_notes = int(m.group(1)), int(m.group(2))
-    else:
-        # kfxlib raises exceptions containing "DRM" for encrypted content
-        if "DRM" in (result.stderr or ""):
+        azw3_script = script_dir / "extract_highlights_azw3.py"
+        extract_cmd = [calibre_debug, "-e", str(azw3_script),
+                       "--", str(json_file), str(book_file)]
+        if title:
+            extract_cmd.extend(["--title", title])
+
+        result = subprocess.run(extract_cmd, capture_output=True, text=True)
+        n_highlights, n_notes = raw_highlights, raw_notes
+
+        if result.returncode == 0:
+            if result.stdout:
+                try:
+                    nh, nn = _format_azw3_output(
+                        result.stdout, book_file, output_dir, fmt,
+                        title=title, quiet=quiet)
+                    n_highlights, n_notes = nh, nn
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"Warning: failed to parse AZW3 extraction output: {e}",
+                          file=sys.stderr)
+        else:
+            if "DRM" in (result.stderr or ""):
+                if result.stderr:
+                    print(result.stderr, end="", file=sys.stderr)
+                raise DRMError(f"DRM-protected: {book_file.name}",
+                               highlights=raw_highlights, notes=raw_notes)
             if result.stderr:
                 print(result.stderr, end="", file=sys.stderr)
-            raise DRMError(f"DRM-protected: {kfx_file.name}",
-                           highlights=raw_highlights, notes=raw_notes)
-        if result.stderr:
-            print(result.stderr, end="", file=sys.stderr)
-        raise subprocess.CalledProcessError(result.returncode, extract_cmd)
+            raise subprocess.CalledProcessError(result.returncode, extract_cmd)
+    else:
+        # KFX path: use the existing kfxlib extractor
+        extract_cmd = [sys.executable,
+                       str(script_dir / "extract_highlights_kfxlib.py"),
+                       str(json_file), str(book_file),
+                       "--output-dir", str(output_dir),
+                       "--format", fmt]
+        if quiet:
+            extract_cmd.append("--quiet")
+        if title:
+            extract_cmd.extend(["--title", title])
+
+        result = subprocess.run(extract_cmd, capture_output=True, text=True)
+        n_highlights, n_notes = raw_highlights, raw_notes
+        if result.returncode == 0:
+            if result.stdout:
+                print(result.stdout, end="")
+                m = _SAVED_RE.search(result.stdout)
+                if m:
+                    n_highlights, n_notes = int(m.group(1)), int(m.group(2))
+        else:
+            # kfxlib raises exceptions containing "DRM" for encrypted content
+            if "DRM" in (result.stderr or ""):
+                if result.stderr:
+                    print(result.stderr, end="", file=sys.stderr)
+                raise DRMError(f"DRM-protected: {book_file.name}",
+                               highlights=raw_highlights, notes=raw_notes)
+            if result.stderr:
+                print(result.stderr, end="", file=sys.stderr)
+            raise subprocess.CalledProcessError(result.returncode, extract_cmd)
 
     if not keep_json and json_file.exists():
         json_file.unlink()
@@ -226,11 +446,13 @@ def validate_kindle_path(kindle_path):
 
 
 def find_kindle_pairs(kindle_path):
-    """Scan a mounted Kindle for .kfx / .yjr pairs.
+    """Scan a mounted Kindle for book/annotation pairs.
+
+    Supports both KFX (.kfx + .yjr) and AZW3 (.azw3 + .azw3r/.azw3f) pairs.
 
     Looks in documents/, documents/Downloads/, and any subdirectories of
-    Downloads/ (e.g. Downloads/Items01/). For each .kfx file, checks the
-    sibling .sdr/ folder for a matching .yjr annotation file.
+    Downloads/ (e.g. Downloads/Items01/). For each book file, checks the
+    sibling .sdr/ folder for a matching annotation file.
     """
     docs = validate_kindle_path(kindle_path)
     scan_dirs = [docs]
@@ -246,27 +468,33 @@ def find_kindle_pairs(kindle_path):
     seen_stems = set()
 
     for scan_dir in scan_dirs:
-        kfx_files = sorted(scan_dir.glob("*.kfx"))
-        for kfx in kfx_files:
-            if kfx.stem in seen_stems:
-                continue
-            seen_stems.add(kfx.stem)
+        for book_ext, ann_exts in _BOOK_FORMATS.items():
+            book_files = sorted(scan_dir.glob(f"*{book_ext}"))
+            for book in book_files:
+                if book.stem in seen_stems:
+                    continue
 
-            sdr_dir = scan_dir / f"{kfx.stem}.sdr"
-            if not sdr_dir.is_dir():
-                continue
+                sdr_dir = scan_dir / f"{book.stem}.sdr"
+                if not sdr_dir.is_dir():
+                    continue
 
-            yjr_matches = sorted(sdr_dir.glob("*.yjr"))
-            # Filter to those whose name starts with the kfx stem
-            yjr_matches = [y for y in yjr_matches if y.stem.startswith(kfx.stem)]
+                # Search for annotation files in preference order
+                best_match = None
+                for ann_ext in ann_exts:
+                    ann_matches = sorted(sdr_dir.glob(f"*{ann_ext}"))
+                    ann_matches = [a for a in ann_matches
+                                   if a.stem.startswith(book.stem)]
+                    if ann_matches:
+                        if len(ann_matches) > 1:
+                            # Take the most recently modified one
+                            ann_matches.sort(
+                                key=lambda p: p.stat().st_mtime, reverse=True)
+                        best_match = ann_matches[0]
+                        break  # Use first matching extension type (preferred)
 
-            if len(yjr_matches) == 1:
-                pairs.append((kfx, yjr_matches[0]))
-            elif len(yjr_matches) > 1:
-                # Take the most recently modified one
-                yjr_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                pairs.append((kfx, yjr_matches[0]))
-            # else: no annotations for this book, skip silently
+                if best_match:
+                    seen_stems.add(book.stem)
+                    pairs.append((book, best_match))
 
     return pairs
 
@@ -280,30 +508,32 @@ def filter_new_or_changed(pairs, sync_state):
     filtered = []
     skipped = 0
 
-    for kfx, yjr in pairs:
-        stem = kfx.stem
+    for book, ann in pairs:
+        stem = book.stem
         record = books.get(stem)
         if record and record.get("status") == "success":
             try:
-                kfx_mtime = kfx.stat().st_mtime
-                yjr_mtime = yjr.stat().st_mtime
+                book_mtime = book.stat().st_mtime
+                ann_mtime = ann.stat().st_mtime
             except OSError:
-                filtered.append((kfx, yjr))
+                filtered.append((book, ann))
                 continue
             # Use tolerance for mtime comparison — Kindle uses FAT32
             # (2-second resolution) while macOS uses APFS (nanoseconds),
             # and float precision can vary across JSON round-trips.
-            if (abs(kfx_mtime - record.get("kfx_mtime", 0)) < 2.0
-                    and abs(yjr_mtime - record.get("yjr_mtime", 0)) < 2.0):
+            # Note: sync state uses "kfx_mtime"/"yjr_mtime" field names
+            # for historical reasons; they apply to any book/annotation format.
+            if (abs(book_mtime - record.get("kfx_mtime", 0)) < 2.0
+                    and abs(ann_mtime - record.get("yjr_mtime", 0)) < 2.0):
                 skipped += 1
                 continue
-        filtered.append((kfx, yjr))
+        filtered.append((book, ann))
 
     return filtered, skipped
 
 
 def import_pair_to_input(kfx, yjr, input_dir):
-    """Copy both .kfx and .yjr files to input/. Returns (dest_kfx, dest_yjr)."""
+    """Copy both book and annotation files to input/. Returns (dest_book, dest_ann)."""
     input_dir.mkdir(parents=True, exist_ok=True)
     dest_kfx = input_dir / kfx.name
     dest_yjr = input_dir / yjr.name
@@ -313,7 +543,7 @@ def import_pair_to_input(kfx, yjr, input_dir):
 
 
 def import_metadata_only(yjr, pending_dir):
-    """Copy just the .yjr file to input/pending/. Returns dest path."""
+    """Copy just the annotation file to input/pending/. Returns dest path."""
     pending_dir.mkdir(parents=True, exist_ok=True)
     dest_yjr = pending_dir / yjr.name
     shutil.copy2(yjr, dest_yjr)
@@ -328,6 +558,10 @@ def _update_sync_record(sync_state, kfx, yjr, status, error=None,
     Preserves existing kindle_*_path and *_mtime fields if the kfx/yjr
     being passed are local copies (e.g. after --import-book copies files
     to input/ and then runs extraction on the copies).
+
+    Note: Field names use "kfx" and "yjr" for historical reasons. They
+    apply to any book format (KFX, AZW3) and annotation format (.yjr,
+    .azw3r, .azw3f) respectively.
     """
     stem = kfx.stem
     books = sync_state.setdefault("books", {})
@@ -424,10 +658,10 @@ def _run_extraction(to_process, script_dir, output_dir, args, sync_state,
 def build_calibre_index(calibre_path):
     """Query Calibre's metadata.db to build lookup indexes.
 
-    Returns (asin_to_kfx, asin_to_title, title_index) where:
-    - asin_to_kfx: {asin: {title, kfx_path, format, book_id}} — books with KFX/KFX-ZIP
+    Returns (asin_to_book, asin_to_title, title_index) where:
+    - asin_to_book: {asin: {title, book_path, format, book_id}} — books with KFX/KFX-ZIP/AZW3
     - asin_to_title: {asin: {title, book_id}} — all books with ASINs
-    - title_index: {book_id: {title, has_kfx, kfx_path}} — for fuzzy matching
+    - title_index: {book_id: {title, has_book, book_path}} — for fuzzy matching
     """
     db_path = calibre_path / "metadata.db"
     if not db_path.is_file():
@@ -445,73 +679,84 @@ def build_calibre_index(calibre_path):
             WHERE i.type = 'mobi-asin'
         """).fetchall()
 
-        # All KFX/KFX-ZIP format entries
-        kfx_rows = conn.execute("""
+        # All KFX/KFX-ZIP/AZW3 format entries
+        book_rows = conn.execute("""
             SELECT d.book, d.format, d.name, b.title, b.path
             FROM data d
             JOIN books b ON b.id = d.book
-            WHERE d.format IN ('KFX', 'KFX-ZIP')
+            WHERE d.format IN ('KFX', 'KFX-ZIP', 'AZW3')
         """).fetchall()
     finally:
         conn.close()
 
-    # Build kfx lookup: book_id -> {format, title, author_path}
-    kfx_by_book = {}
-    for row in kfx_rows:
+    # Format preference: KFX > KFX-ZIP > AZW3
+    _FORMAT_PRIORITY = {"KFX": 0, "KFX-ZIP": 1, "AZW3": 2}
+
+    # Build book lookup: book_id -> {format, book_path, title}
+    books_by_id = {}
+    for row in book_rows:
         book_id = row["book"]
         fmt = row["format"]
-        # Prefer KFX over KFX-ZIP
-        if book_id in kfx_by_book and kfx_by_book[book_id]["format"] == "KFX":
-            continue
-        ext = ".kfx" if fmt == "KFX" else ".kfx-zip"
+        # Keep the highest-priority format
+        if book_id in books_by_id:
+            existing_priority = _FORMAT_PRIORITY.get(books_by_id[book_id]["format"], 99)
+            new_priority = _FORMAT_PRIORITY.get(fmt, 99)
+            if new_priority >= existing_priority:
+                continue
+
+        ext_map = {"KFX": ".kfx", "KFX-ZIP": ".kfx-zip", "AZW3": ".azw3"}
+        ext = ext_map.get(fmt, f".{fmt.lower()}")
         # Calibre stores files as: library/Author/Title (ID)/name.ext
         # The 'name' column from the data table is the actual filename stem
         book_dir = calibre_path / row["path"]
-        kfx_path = book_dir / f"{row['name']}{ext}"
-        if not kfx_path.is_file():
+        book_path = book_dir / f"{row['name']}{ext}"
+        if not book_path.is_file():
             # Fall back to globbing the directory
             try:
-                pattern = f"*.{fmt.lower()}" if fmt == "KFX" else "*.kfx-zip"
+                if fmt == "KFX-ZIP":
+                    pattern = "*.kfx-zip"
+                else:
+                    pattern = f"*.{fmt.lower()}"
                 matches = list(book_dir.glob(pattern))
                 if not matches:
                     matches = [p for p in book_dir.iterdir()
                                if p.suffix.lower() == ext]
-                kfx_path = matches[0] if matches else None
+                book_path = matches[0] if matches else None
             except OSError:
-                kfx_path = None
+                book_path = None
 
-        if kfx_path and kfx_path.is_file():
-            kfx_by_book[book_id] = {
+        if book_path and book_path.is_file():
+            books_by_id[book_id] = {
                 "format": fmt,
-                "kfx_path": kfx_path,
+                "book_path": book_path,
                 "title": row["title"],
             }
 
     # Build the three indexes
-    asin_to_kfx = {}
+    asin_to_book = {}
     asin_to_title = {}
     for row in asin_rows:
         asin = row["asin"].upper()
         book_id = row["book_id"]
         asin_to_title[asin] = {"title": row["title"], "book_id": book_id}
-        if book_id in kfx_by_book:
-            info = kfx_by_book[book_id]
-            asin_to_kfx[asin] = {
+        if book_id in books_by_id:
+            info = books_by_id[book_id]
+            asin_to_book[asin] = {
                 "title": info["title"],
-                "kfx_path": info["kfx_path"],
+                "kfx_path": info["book_path"],  # kept as kfx_path for compatibility
                 "format": info["format"],
                 "book_id": book_id,
             }
 
     title_index = {}
-    # Include books that have KFX (with or without ASIN)
-    for book_id, info in kfx_by_book.items():
+    # Include books that have a supported format (with or without ASIN)
+    for book_id, info in books_by_id.items():
         title_index[book_id] = {
             "title": info["title"],
-            "has_kfx": True,
-            "kfx_path": info["kfx_path"],
+            "has_kfx": True,  # kept as has_kfx for compatibility
+            "kfx_path": info["book_path"],
         }
-    # Add ASIN-bearing books without KFX
+    # Add ASIN-bearing books without any supported format
     for row in asin_rows:
         if row["book_id"] not in title_index:
             title_index[row["book_id"]] = {
@@ -520,7 +765,7 @@ def build_calibre_index(calibre_path):
                 "kfx_path": None,
             }
 
-    return asin_to_kfx, asin_to_title, title_index
+    return asin_to_book, asin_to_title, title_index
 
 
 def fuzzy_match_title(kindle_title, title_index, threshold=0.80):
@@ -550,8 +795,10 @@ def fuzzy_match_title(kindle_title, title_index, threshold=0.80):
     return None
 
 
-def find_yjr_for_stem(stem, sync_state, script_dir):
-    """Locate the .yjr annotation file for a Kindle book stem.
+def find_annotation_for_stem(stem, sync_state, script_dir):
+    """Locate the annotation file for a Kindle book stem.
+
+    Searches for .yjr, .azw3r, and .azw3f files (in preference order).
 
     Search order:
     1. local_yjr_path from sync state (set by prior --import-metadata)
@@ -560,24 +807,27 @@ def find_yjr_for_stem(stem, sync_state, script_dir):
 
     Returns Path or None.
     """
+    all_ann_exts = [".yjr", ".azw3r", ".azw3f"]
+
     books = sync_state.get("books", {})
     record = books.get(stem, {})
 
-    # Check sync state for a known local .yjr path
+    # Check sync state for a known local annotation path
     local_yjr = record.get("local_yjr_path")
     if local_yjr:
         p = Path(local_yjr)
         if p.is_file():
             return p
 
-    # Scan input/pending/ for a matching .yjr
+    # Scan input/pending/ for a matching annotation file
     pending_dir = script_dir / "input" / "pending"
     if pending_dir.is_dir():
-        for yjr in sorted(pending_dir.glob("*.yjr")):
-            if yjr.stem.startswith(stem):
-                return yjr
+        for ann_ext in all_ann_exts:
+            for ann in sorted(pending_dir.glob(f"*{ann_ext}")):
+                if ann.stem.startswith(stem):
+                    return ann
 
-    # Fallback: on-device .yjr path (e.g. for --all-books remapping)
+    # Fallback: on-device annotation path (e.g. for --all-books remapping)
     kindle_yjr = record.get("kindle_yjr_path")
     if kindle_yjr:
         p = Path(kindle_yjr)
@@ -624,7 +874,7 @@ def match_calibre_books(sync_state, calibre_path, script_dir, all_books=False):
         # Try ASIN match first
         if asin and asin in asin_to_kfx:
             info = asin_to_kfx[asin]
-            yjr_path = find_yjr_for_stem(stem, sync_state, script_dir)
+            yjr_path = find_annotation_for_stem(stem, sync_state, script_dir)
             if yjr_path:
                 matched.append({
                     "stem": stem,
@@ -644,7 +894,7 @@ def match_calibre_books(sync_state, calibre_path, script_dir, all_books=False):
             continue
 
         if asin and asin in asin_to_title:
-            # ASIN matched a Calibre book but it has no KFX format
+            # ASIN matched a Calibre book but it has no supported format
             info = asin_to_title[asin]
             matched_no_kfx.append({
                 "stem": stem,
@@ -657,7 +907,7 @@ def match_calibre_books(sync_state, calibre_path, script_dir, all_books=False):
         kindle_title = kindle_stem_to_title(stem)
         fuzzy = fuzzy_match_title(kindle_title, title_index)
         if fuzzy and fuzzy["has_kfx"]:
-            yjr_path = find_yjr_for_stem(stem, sync_state, script_dir)
+            yjr_path = find_annotation_for_stem(stem, sync_state, script_dir)
             if yjr_path:
                 matched.append({
                     "stem": stem,
@@ -741,14 +991,14 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
             print(f"    -> {m['calibre_title']} (score: {m['score']:.0%})")
 
     if matched_no_kfx:
-        print(f"\nMatched but no KFX format: {len(matched_no_kfx)}")
+        print(f"\nMatched but no supported format (KFX/AZW3): {len(matched_no_kfx)}")
         if not args.quiet:
             for m in matched_no_kfx:
                 print(f"  {m['stem']}")
                 print(f"    -> {m['calibre_title']}")
 
     if no_yjr:
-        print(f"\nMatched with KFX but no .yjr found: {len(no_yjr)}")
+        print(f"\nMatched but no annotation file found: {len(no_yjr)}")
         if not args.quiet:
             for m in no_yjr:
                 print(f"  {m['stem']}")
@@ -847,57 +1097,80 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
 
 
 def find_pairs(input_dir):
-    """Match .kfx files to .yjr files in input_dir.
+    """Match book files to annotation files in input_dir.
 
-    The Kindle naming convention places the .yjr filename as an extension
-    of the .kfx stem (with an appended annotation hash). So we pair a .yjr
-    file with a .kfx file when the .yjr name starts with the .kfx stem.
+    Supports both KFX (.kfx + .yjr) and AZW3 (.azw3 + .azw3r/.azw3f) pairs.
+
+    The Kindle naming convention places the annotation filename as an extension
+    of the book stem (with an appended annotation hash). So we pair an annotation
+    file with a book file when the annotation name starts with the book stem.
     """
-    kfx_files = sorted(input_dir.glob("*.kfx"))
-    yjr_files = sorted(input_dir.glob("*.yjr"))
-
     pairs = []
-    for kfx in kfx_files:
-        matches = [y for y in yjr_files if y.stem.startswith(kfx.stem)]
-        if len(matches) == 1:
-            pairs.append((kfx, matches[0]))
-        elif len(matches) > 1:
-            print(f"Warning: multiple .yjr files match {kfx.name}, skipping:")
-            for m in matches:
-                print(f"  - {m.name}")
-        else:
-            print(f"Warning: no .yjr file found for {kfx.name}, skipping")
+    all_annotation_files = set()
 
-    unmatched_yjr = set(yjr_files) - {y for _, y in pairs}
-    for y in sorted(unmatched_yjr):
-        print(f"Warning: no .kfx file found for {y.name}, skipping")
+    for book_ext, ann_exts in _BOOK_FORMATS.items():
+        book_files = sorted(input_dir.glob(f"*{book_ext}"))
+        ann_files = []
+        for ann_ext in ann_exts:
+            ann_files.extend(input_dir.glob(f"*{ann_ext}"))
+        ann_files = sorted(set(ann_files))
+        all_annotation_files.update(ann_files)
+
+        for book in book_files:
+            # Find annotation files whose stem starts with the book stem
+            matches = [a for a in ann_files if a.stem.startswith(book.stem)]
+            if len(matches) == 1:
+                pairs.append((book, matches[0]))
+            elif len(matches) > 1:
+                # For AZW3, prefer .azw3r over .azw3f (first ext in list)
+                preferred = [a for a in matches
+                             if a.suffix in _BOOK_FORMATS.get(book_ext, [])[:1]]
+                if len(preferred) == 1:
+                    pairs.append((book, preferred[0]))
+                else:
+                    print(f"Warning: multiple annotation files match {book.name}, skipping:")
+                    for m in matches:
+                        print(f"  - {m.name}")
+            else:
+                ann_desc = "/".join(ann_exts)
+                print(f"Warning: no {ann_desc} file found for {book.name}, skipping")
+
+    matched_annotations = {a for _, a in pairs}
+    unmatched = all_annotation_files - matched_annotations
+    for a in sorted(unmatched):
+        print(f"Warning: no book file found for {a.name}, skipping")
 
     return pairs
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract highlights and notes from Kindle KFX books.",
+        description="Extract highlights and notes from Kindle books (KFX and AZW3).",
         epilog="""\
 examples:
-  %(prog)s                              Process all paired .kfx/.yjr files in input/
-  %(prog)s input/book.kfx input/book.yjr   Process a single book/annotation pair
+  %(prog)s                              Process all paired books in input/
+  %(prog)s input/book.kfx input/book.yjr   Process a single KFX book
+  %(prog)s input/book.azw3 input/book.azw3r  Process a single AZW3 book
   %(prog)s -o results/ book.kfx book.yjr   Write output to a custom directory
   %(prog)s --kindle /Volumes/Kindle        Process directly from a connected Kindle
   %(prog)s --kindle /Volumes/Kindle --import-only   Copy files to input/ only
   %(prog)s --kindle /Volumes/Kindle --dry-run       Preview what would be done
 
-In bulk mode, .kfx and .yjr files are paired by filename: the .yjr name
-must start with the .kfx stem (Kindle's default naming convention).""",
+Supported formats:
+  KFX:  .kfx book + .yjr annotations
+  AZW3: .azw3 book + .azw3r/.azw3f annotations (requires Calibre)
+
+In bulk mode, book and annotation files are paired by filename: the annotation
+name must start with the book stem (Kindle's default naming convention).""",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "kfx_file", nargs="?", type=Path, metavar="BOOK.kfx",
-        help="path to the KFX book file",
+        "kfx_file", nargs="?", type=Path, metavar="BOOK",
+        help="path to the book file (.kfx or .azw3)",
     )
     parser.add_argument(
-        "yjr_file", nargs="?", type=Path, metavar="ANNOTATIONS.yjr",
-        help="path to the YJR annotation file",
+        "yjr_file", nargs="?", type=Path, metavar="ANNOTATIONS",
+        help="path to the annotation file (.yjr, .azw3r, or .azw3f)",
     )
     parser.add_argument(
         "-o", "--output-dir", type=Path, default=None, metavar="DIR",
@@ -934,15 +1207,15 @@ must start with the .kfx stem (Kindle's default naming convention).""",
     import_group = parser.add_mutually_exclusive_group()
     import_group.add_argument(
         "--import-only", action="store_true",
-        help="copy .kfx + .yjr from Kindle to input/ without extracting",
+        help="copy book + annotation files from Kindle to input/ without extracting",
     )
     import_group.add_argument(
         "--import-book", action="store_true",
-        help="copy .kfx + .yjr to input/ and run extraction",
+        help="copy book + annotation files to input/ and run extraction",
     )
     import_group.add_argument(
         "--import-metadata", action="store_true",
-        help="copy only .yjr to input/pending/ (for DRM books)",
+        help="copy only annotation files to input/pending/ (for DRM books)",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -954,7 +1227,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
     )
     parser.add_argument(
         "--calibre-library", type=Path, nargs="?", const="USE_CONFIG", default=None, metavar="PATH",
-        help="path to Calibre library (match DRM books to unlocked Calibre KFX files); uses config default if no path specified",
+        help="path to Calibre library (match DRM books to unlocked Calibre files); uses config default if no path specified",
     )
     parser.add_argument(
         "--accept-fuzzy", action="store_true",
@@ -1041,7 +1314,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
 
     # If one positional arg is given without the other, that's an error
     if (args.kfx_file is None) != (args.yjr_file is None):
-        parser.error("provide both BOOK.kfx and ANNOTATIONS.yjr, or neither for bulk mode")
+        parser.error("provide both BOOK and ANNOTATIONS files, or neither for bulk mode")
 
     # --- Calibre library matching mode ---
     # Only enter Calibre mode if explicitly requested via CLI flag, not just config default
@@ -1059,7 +1332,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
         pairs = find_kindle_pairs(args.kindle)
 
         if not pairs:
-            print("No paired .kfx/.yjr files found on Kindle.")
+            print("No paired book/annotation files found on Kindle.")
             sys.exit(0)
 
         print(f"Found {len(pairs)} book(s) on Kindle:\n")
@@ -1091,7 +1364,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             elif args.import_book:
                 mode = "copy to input/ and extract"
             elif args.import_metadata:
-                mode = "copy .yjr to input/pending/"
+                mode = "copy annotations to input/pending/"
             for kfx, yjr in pairs:
                 print(f"  [{mode}] {kfx.name}")
             sys.exit(0)
@@ -1116,7 +1389,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
                     failed.append(kfx.name)
             print(f"\nImported {imported} annotation file(s) to {pending_dir}")
             if imported:
-                print("Tip: pair these with unlocked .kfx files in input/ for extraction.")
+                print("Tip: pair these with unlocked book files in input/ for extraction.")
         elif args.import_only:
             # Copy .kfx + .yjr to input/
             for kfx, yjr in pairs:
@@ -1171,7 +1444,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             for name in drm_flagged:
                 print(f"  - {name}")
             print("Tip: use --import-metadata to copy annotations, then pair "
-                  "with unlocked .kfx files.")
+                  "with unlocked book files.")
 
         if failed:
             print("\nFailed:")
@@ -1187,9 +1460,9 @@ must start with the .kfx stem (Kindle's default naming convention).""",
     if args.kfx_file and args.yjr_file:
         # Single-pair mode
         if not args.kfx_file.is_file():
-            parser.error(f"KFX file not found: {args.kfx_file}")
+            parser.error(f"Book file not found: {args.kfx_file}")
         if not args.yjr_file.is_file():
-            parser.error(f"YJR file not found: {args.yjr_file}")
+            parser.error(f"Annotation file not found: {args.yjr_file}")
 
         try:
             nh, nn = process_pair(args.kfx_file, args.yjr_file, script_dir, output_dir,
@@ -1215,7 +1488,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
 
         pairs = find_pairs(input_dir)
         if not pairs:
-            print("No paired .kfx/.yjr files found in input/")
+            print("No paired book/annotation files found in input/")
             sys.exit(1)
 
         print(f"Found {len(pairs)} book(s) to process:\n")
@@ -1310,7 +1583,7 @@ must start with the .kfx stem (Kindle's default naming convention).""",
             for name in drm_flagged:
                 print(f"  - {name}")
             print("Tip: use --kindle --import-metadata to copy annotations, "
-                  "then pair with unlocked .kfx files.")
+                  "then pair with unlocked book files.")
         if failed:
             print(f"Failed:")
             for name in failed:

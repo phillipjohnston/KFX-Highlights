@@ -1,11 +1,13 @@
 # KFX Highlights
 Uses Synced Kindle Annotations to Make Highlights File
 
-Most of the documents I read on my Kindle are sent via "Send to Kindle" so that I can read them on other devices. However, one of the issues I've noticed is that there's no way to extract synced highlights. This tool extracts them by reading the KFX book files and YJR annotation files directly.
+Most of the documents I read on my Kindle are sent via "Send to Kindle" so that I can read them on other devices. However, one of the issues I've noticed is that there's no way to extract synced highlights. This tool extracts them by reading the book files and annotation files directly.
+
+Supports both **KFX** (`.kfx` + `.yjr`) and **AZW3** (`.azw3` + `.azw3r`/`.azw3f`) formats.
 
 You can either connect your Kindle via USB and process books directly from the device, or manually copy the files to the `input/` directory.
 
-jhowell released a [KRDS Parser](https://www.mobileread.com/forums/showthread.php?t=322172). It's located [here](https://github.com/K-R-D-S/KRDS). 
+jhowell released a [KRDS Parser](https://www.mobileread.com/forums/showthread.php?t=322172). It's located [here](https://github.com/K-R-D-S/KRDS).
 
 
 ## Setup
@@ -24,6 +26,8 @@ Activate the virtual environment before each use:
 source .venv/bin/activate
 ```
 
+**AZW3 support** additionally requires [Calibre](https://calibre-ebook.com/) to be installed. The tool uses `calibre-debug -e` to run the AZW3 decompression under Calibre's Python environment. It checks your PATH first, then looks in common installation locations (e.g. `/Applications/calibre.app/Contents/MacOS/` on macOS).
+
 ## Usage
 
 ### Kindle device mode (recommended)
@@ -34,7 +38,7 @@ Connect your Kindle via USB, then process directly from the device:
 python extract_highlights.py --kindle /Volumes/Kindle
 ```
 
-This scans the Kindle's `documents/` and `documents/Downloads/` directories, finds all `.kfx`/`.yjr` pairs, and extracts highlights to `output/`. It uses incremental sync — unchanged books that were previously processed are skipped automatically.
+This scans the Kindle's `documents/` and `documents/Downloads/` directories, finds all book/annotation pairs (both KFX and AZW3), and extracts highlights to `output/`. It uses incremental sync — unchanged books that were previously processed are skipped automatically.
 
 You can set a persistent default in `config.yaml` so you don't need to pass the path every time:
 
@@ -47,19 +51,19 @@ kindle_path: /Volumes/Kindle
 Instead of processing in-place, you can copy files from the Kindle to `input/`:
 
 ```bash
-# Copy .kfx + .yjr to input/ without extracting
+# Copy book + annotation files to input/ without extracting
 python extract_highlights.py --kindle /Volumes/Kindle --import-only
 
-# Copy .kfx + .yjr to input/ AND run extraction
+# Copy book + annotation files to input/ AND run extraction
 python extract_highlights.py --kindle /Volumes/Kindle --import-book
 
-# Copy only .yjr annotations to input/pending/ (for DRM-protected books)
+# Copy only annotation files to input/pending/ (for DRM-protected books)
 python extract_highlights.py --kindle /Volumes/Kindle --import-metadata
 ```
 
 #### DRM-protected books
 
-Books with DRM will fail extraction and are flagged separately in the output. Use `--import-metadata` to copy just the annotation files, then use `--calibre-library` to automatically match them with unlocked KFX files in your Calibre library (see below). Alternatively, manually place an unlocked `.kfx` in `input/` and run in bulk mode.
+Books with DRM will fail extraction and are flagged separately in the output. Use `--import-metadata` to copy just the annotation files, then use `--calibre-library` to automatically match them with unlocked files in your Calibre library (see below). Alternatively, manually place an unlocked book file in `input/` and run in bulk mode.
 
 #### Testing and preview
 
@@ -73,7 +77,7 @@ python extract_highlights.py --kindle /Volumes/Kindle --limit 5
 
 ### Calibre library mode
 
-If you have a Calibre library with unlocked KFX copies of your DRM-protected Kindle books, this mode automatically matches them by ASIN and extracts highlights using the Calibre KFX files directly (no file copying needed).
+If you have a Calibre library with unlocked copies of your DRM-protected Kindle books, this mode automatically matches them by ASIN and extracts highlights using the Calibre files directly (no file copying needed). Supports KFX, KFX-ZIP, and AZW3 formats in Calibre (prefers KFX > KFX-ZIP > AZW3).
 
 First, import annotations from your Kindle:
 
@@ -97,9 +101,9 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --acce
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --all-books
 ```
 
-By default, only DRM-flagged books are matched. Use `--all-books` to also include books that were already successfully processed from the Kindle — useful if you want to re-extract using the Calibre KFX version instead.
+By default, only DRM-flagged books are matched. Use `--all-books` to also include books that were already successfully processed from the Kindle — useful if you want to re-extract using the Calibre version instead.
 
-The matching report shows four categories: ASIN-matched with KFX (processable), matched but no KFX format in Calibre, matched with KFX but no `.yjr` imported yet, and unmatched. You can set a persistent default in `config.yaml`:
+The matching report shows four categories: ASIN-matched with a supported format (processable), matched but no supported format in Calibre, matched but no annotation file imported yet, and unmatched. You can set a persistent default in `config.yaml`:
 
 ```yaml
 calibre_library: /path/to/Calibre Library
@@ -107,25 +111,30 @@ calibre_library: /path/to/Calibre Library
 
 ### Bulk mode (all books at once)
 
-Place all `.kfx` and `.yjr` files in the `input/` directory, then run:
+Place book and annotation files in the `input/` directory, then run:
 
 ```
 python extract_highlights.py
 ```
 
-This scans `input/` and automatically pairs `.kfx` files with their corresponding `.yjr` annotation files by matching filenames. Each pair is processed sequentially, and failures are reported at the end without aborting the whole run.
+This scans `input/` and automatically pairs book files with their corresponding annotation files by matching filenames. Supports both KFX (`.kfx` + `.yjr`) and AZW3 (`.azw3` + `.azw3r`/`.azw3f`) pairs. Each pair is processed sequentially, and failures are reported at the end without aborting the whole run.
 
 `--dry-run` and `--limit N` work in bulk mode too.
 
 ### Single book
 
-```
+```bash
+# KFX book
 python extract_highlights.py <book.kfx> <annotations.yjr>
+
+# AZW3 book (requires Calibre)
+python extract_highlights.py <book.azw3> <annotations.azw3r>
 ```
 
 All modes will:
-1. Convert the YJR file to JSON using `krds.py`.
-2. Call `extract_highlights_kfxlib.py` with the generated JSON and KFX file to create the HTML highlights file.
+1. Convert the annotation file to JSON using `krds.py`.
+2. For KFX: call `extract_highlights_kfxlib.py` with the generated JSON and book file.
+3. For AZW3: call `extract_highlights_azw3.py` via `calibre-debug -e` to decompress and extract highlights.
 
 Output goes to `output/`.
 
@@ -141,10 +150,10 @@ Output goes to `output/`.
 | `-j N` / `--jobs N` | Parallel workers (0 = CPU count, default: 1) |
 | `-o DIR` | Write output to a custom directory |
 | `--kindle PATH` | Path to mounted Kindle device |
-| `--import-only` | Copy files from Kindle to `input/` without extracting |
-| `--import-book` | Copy files to `input/` and extract |
-| `--import-metadata` | Copy only `.yjr` to `input/pending/` (for DRM books) |
-| `--calibre-library PATH` | Match DRM books to Calibre library KFX files |
+| `--import-only` | Copy book + annotation files from Kindle to `input/` without extracting |
+| `--import-book` | Copy book + annotation files to `input/` and extract |
+| `--import-metadata` | Copy only annotations to `input/pending/` (for DRM books) |
+| `--calibre-library PATH` | Match DRM books to unlocked Calibre library files |
 | `--accept-fuzzy` | Include fuzzy title matches in Calibre mode |
 | `--all-books` | Match all synced books to Calibre, not just DRM-flagged |
 | `--reprocess` | Reprocess previously successful books (bypass sync state skip logic) |
