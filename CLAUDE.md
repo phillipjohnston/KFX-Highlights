@@ -73,11 +73,16 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --all-
 
 # Update Calibre book paths in sync state (after library reorganization)
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch
+
+# Rematch only books whose Calibre files are missing
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch --missing-only
 ```
 
 Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin` in Calibre's `metadata.db`. Fuzzy title matching is available as a fallback for books without ASIN matches. Calibre files are used in-place (no copying). The `calibre_library` config key provides a persistent default. Use `--all-books` to include successfully processed books (not just DRM-flagged) in the matching.
 
-**Path updates**: If books have been moved or renamed in your Calibre library, use `--rematch` to update the stored paths in `.sync_state.json` without reprocessing. This queries the Calibre library again and updates the `calibre_kfx_path` for all matched books.
+**Path updates**: If books have been moved or renamed in your Calibre library, use `--rematch` to update the stored paths in `.sync_state.json` without reprocessing. This queries the Calibre library again and updates the `calibre_kfx_path` for all matched books. Use `--missing-only` with `--rematch` to only update books whose stored Calibre file path no longer exists.
+
+**Missing file tracking**: When processing fails because a Calibre book file can't be found, the sync state records `"file_missing": true` and `"error": "calibre-file-missing"`. Use `--rematch --missing-only` to selectively update only these books. The `file_missing` flag is automatically cleared when the file is successfully found and processed.
 
 To prevent specific books from being rematched (e.g., if you've manually set a custom Calibre path), add `"rematch_disabled": true` to the book's record in `.sync_state.json`:
 
@@ -112,6 +117,7 @@ To prevent specific books from being rematched (e.g., if you've manually set a c
 - `--accept-fuzzy` — Include fuzzy title matches in Calibre mode (default: ASIN-only)
 - `--all-books` — Match all synced books to Calibre, not just DRM-flagged (requires `--calibre-library`)
 - `--rematch` — Update Calibre book paths in sync state without reprocessing (requires `--calibre-library`)
+- `--missing-only` — Rematch only books whose Calibre files are missing (requires `--rematch`)
 
 ### Re-exporting in a different format
 

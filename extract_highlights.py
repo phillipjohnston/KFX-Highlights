@@ -1023,6 +1023,23 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
 
     # If --rematch mode, just update the sync state with new paths
     if args.rematch:
+        # If --missing-only, filter to only books with missing Calibre files
+        if args.missing_only:
+            missing_books = []
+            for m in to_process:
+                record = books.get(m["stem"], {})
+                old_path = record.get("calibre_kfx_path")
+                if old_path and not Path(old_path).is_file():
+                    missing_books.append(m)
+
+            original_count = len(to_process)
+            to_process = missing_books
+            print(f"\nFiltering to {len(to_process)} book(s) with missing Calibre files (out of {original_count} total)")
+
+            if not to_process:
+                print("No books with missing Calibre files found.")
+                return
+
         print(f"\nUpdating Calibre paths in sync state for {len(to_process)} book(s)...")
         updated = 0
         skipped_disabled = 0
@@ -1042,6 +1059,9 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
                 record["calibre_kfx_path"] = new_path
                 record["calibre_title"] = m["calibre_title"]
                 record["last_attempt"] = datetime.now(timezone.utc).isoformat()
+                # Clear file_missing flag since we found the file
+                if "file_missing" in record:
+                    del record["file_missing"]
                 books[m["stem"]] = record
                 updated += 1
                 print(f"  Updated: {m['calibre_title']}")
@@ -1081,6 +1101,28 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
         print(f"[{i}/{len(to_process)}] {m['calibre_title']}")
         print(f"{'='*60}")
 
+        # Check if files exist before processing
+        if not m["kfx_path"].is_file():
+            print(f"  -> FAILED: Calibre book file not found")
+            failed.append(m)
+            record = books.get(m["stem"], {})
+            record["last_attempt"] = datetime.now(timezone.utc).isoformat()
+            record["error"] = "calibre-file-missing"
+            record["file_missing"] = True
+            record["calibre_kfx_path"] = str(m["kfx_path"])
+            books[m["stem"]] = record
+            continue
+
+        if not m["yjr_path"].is_file():
+            print(f"  -> FAILED: Annotation file not found")
+            failed.append(m)
+            record = books.get(m["stem"], {})
+            record["last_attempt"] = datetime.now(timezone.utc).isoformat()
+            record["error"] = "annotation-file-missing"
+            record["file_missing"] = True
+            books[m["stem"]] = record
+            continue
+
         try:
             nh, nn = process_pair(
                 m["kfx_path"], m["yjr_path"], script_dir, output_dir,
@@ -1096,6 +1138,9 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
             record["error"] = None
             record["calibre_kfx_path"] = str(m["kfx_path"])
             record["calibre_title"] = m["calibre_title"]
+            # Clear file_missing flag on success
+            if "file_missing" in record:
+                del record["file_missing"]
             if nh is not None:
                 record["highlights"] = nh
             if nn is not None:
@@ -1282,6 +1327,10 @@ name must start with the book stem (Kindle's default naming convention).""",
         "--rematch", action="store_true",
         help="update Calibre book paths in sync state (useful after Calibre library reorganization)",
     )
+    parser.add_argument(
+        "--missing-only", action="store_true",
+        help="rematch only books whose Calibre files are missing (requires --rematch and --calibre-library)",
+    )
 
     script_dir = Path(__file__).parent
     config = load_config(script_dir)
@@ -1355,6 +1404,9 @@ name must start with the book stem (Kindle's default naming convention).""",
 
     if args.rematch and "--calibre-library" not in sys.argv:
         parser.error("--rematch requires --calibre-library")
+
+    if args.missing_only and not args.rematch:
+        parser.error("--missing-only requires --rematch")
 
     # If one positional arg is given without the other, that's an error
     if (args.kfx_file is None) != (args.yjr_file is None):
