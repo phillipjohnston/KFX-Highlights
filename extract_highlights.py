@@ -951,11 +951,11 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
 
     matched, matched_no_kfx, unmatched, no_yjr = match_calibre_books(
         sync_state, calibre_path, script_dir,
-        all_books=args.all_books or args.reprocess or args.rematch)
+        all_books=args.all_books or args.reprocess or args.reprocess_missing or args.rematch)
 
     # Count candidate books for context
     books = sync_state.get("books", {})
-    include_all = args.all_books or args.reprocess
+    include_all = args.all_books or args.reprocess or args.reprocess_missing
     if include_all:
         eligible_statuses = {"drm-flagged", "metadata-only", "success",
                              "imported", "failed"}
@@ -971,7 +971,12 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
     # --- Report ---
     print(f"\nCalibre library: {calibre_path}")
     if include_all:
-        label = "--reprocess" if args.reprocess else "--all-books"
+        if args.reprocess:
+            label = "--reprocess"
+        elif args.reprocess_missing:
+            label = "--reprocess-missing"
+        else:
+            label = "--all-books"
         print(f"Eligible books in sync state: {candidate_count} ({label})\n")
     else:
         print(f"DRM-flagged books in sync state: {candidate_count}\n")
@@ -1020,6 +1025,27 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
     if not to_process:
         print("\nNo books to process.")
         return
+
+    # If --reprocess-missing, filter to books whose output file doesn't exist
+    if args.reprocess_missing:
+        ext_map = {"html": ".highlights.html", "md": ".highlights.md",
+                   "json": ".highlights.json", "csv": ".highlights.csv"}
+        ext = ext_map[args.format]
+        missing = []
+        for m in to_process:
+            title = m["calibre_title"]
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', title)
+            safe_title = re.sub(r'\s+', ' ', safe_title).strip()
+            output_file = output_dir / (safe_title + ext)
+            if not output_file.exists():
+                missing.append(m)
+        skipped_count = len(to_process) - len(missing)
+        to_process = missing
+        if skipped_count:
+            print(f"\nSkipping {skipped_count} book(s) with existing output files")
+        if not to_process:
+            print("No books with missing output files found.")
+            return
 
     # If --rematch mode, just update the sync state with new paths
     if args.rematch:
@@ -1322,6 +1348,10 @@ name must start with the book stem (Kindle's default naming convention).""",
     parser.add_argument(
         "--reprocess", action="store_true",
         help="reprocess previously successful books (bypass sync state skip logic)",
+    )
+    parser.add_argument(
+        "--reprocess-missing", action="store_true",
+        help="reprocess only previously successful books whose output file is missing",
     )
     parser.add_argument(
         "--rematch", action="store_true",
