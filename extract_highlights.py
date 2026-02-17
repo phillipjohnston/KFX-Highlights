@@ -1454,15 +1454,25 @@ name must start with the book stem (Kindle's default naming convention).""",
 
         if args.dry_run:
             print(f"\nDry run — would process {len(pairs)} book(s):")
-            mode = "extract in-place"
             if args.import_only:
                 mode = "copy to input/"
             elif args.import_book:
                 mode = "copy to input/ and extract"
             elif args.import_metadata:
                 mode = "copy annotations to input/pending/"
+            else:
+                mode = None  # per-book mode determined below
+            books = sync_state.get("books", {})
             for kfx, yjr in pairs:
-                print(f"  [{mode}] {kfx.name}")
+                if mode is None:
+                    record = books.get(kfx.stem, {})
+                    calibre_path = record.get("calibre_kfx_path")
+                    if calibre_path and Path(calibre_path).is_file():
+                        print(f"  [via calibre] {kfx.name}")
+                    else:
+                        print(f"  [extract in-place] {kfx.name}")
+                else:
+                    print(f"  [{mode}] {kfx.name}")
             sys.exit(0)
 
         input_dir = script_dir / "input"
@@ -1518,10 +1528,67 @@ name must start with the book stem (Kindle's default naming convention).""",
                 _run_extraction(to_extract, script_dir, output_dir, args,
                                 sync_state, failed, drm_flagged)
         else:
-            # Default mode: process in-place from Kindle
-            print(f"\nProcessing {len(pairs)} book(s) from Kindle...")
-            _run_extraction(pairs, script_dir, output_dir, args,
-                            sync_state, failed, drm_flagged)
+            # Default mode: process in-place from Kindle.
+            # If a book has a calibre_kfx_path in the sync state, use that
+            # instead of the on-device KFX (avoids re-hitting DRM on Kindle).
+            books = sync_state.get("books", {})
+            kindle_pairs = []
+            calibre_pairs = []
+            for kfx, yjr in pairs:
+                record = books.get(kfx.stem, {})
+                calibre_path = record.get("calibre_kfx_path")
+                if calibre_path and Path(calibre_path).is_file():
+                    calibre_pairs.append((Path(calibre_path), yjr,
+                                          record.get("calibre_title"), kfx, yjr))
+                else:
+                    kindle_pairs.append((kfx, yjr))
+
+            if calibre_pairs:
+                print(f"\nProcessing {len(calibre_pairs)} book(s) via Calibre path...")
+                for calibre_kfx, yjr, title, orig_kfx, orig_yjr in calibre_pairs:
+                    print(f"  {orig_kfx.stem} -> {calibre_kfx}")
+                    try:
+                        nh, nn = process_pair(calibre_kfx, yjr, script_dir, output_dir,
+                                              quiet=True, title=title,
+                                              keep_json=args.keep_json, fmt=args.format)
+                        print(f"  -> Done ({nh} highlights, {nn} notes)")
+                        record = books.get(orig_kfx.stem, {})
+                        record["status"] = "success"
+                        record["last_attempt"] = datetime.now(timezone.utc).isoformat()
+                        record["error"] = None
+                        record["kindle_kfx_path"] = str(orig_kfx)
+                        record["kindle_yjr_path"] = str(orig_yjr)
+                        try:
+                            record["kfx_mtime"] = orig_kfx.stat().st_mtime
+                            record["yjr_mtime"] = orig_yjr.stat().st_mtime
+                        except OSError:
+                            pass
+                        if "file_missing" in record:
+                            del record["file_missing"]
+                        if nh is not None:
+                            record["highlights"] = nh
+                        if nn is not None:
+                            record["notes"] = nn
+                        books[orig_kfx.stem] = record
+                    except DRMError as e:
+                        print(f"  -> DRM-PROTECTED ({e.highlights} highlights, {e.notes} notes)")
+                        drm_flagged.append(orig_kfx.name)
+                        _update_sync_record(sync_state, orig_kfx, orig_yjr, "drm-flagged",
+                                            error="DRM-protected",
+                                            highlights=e.highlights, notes=e.notes)
+                    except subprocess.CalledProcessError as e:
+                        print(f"  -> FAILED (exit code {e.returncode})")
+                        failed.append(orig_kfx.name)
+                        _update_sync_record(sync_state, orig_kfx, orig_yjr, "failed",
+                                            error=f"exit code {e.returncode}")
+
+            if kindle_pairs:
+                print(f"\nProcessing {len(kindle_pairs)} book(s) from Kindle...")
+                _run_extraction(kindle_pairs, script_dir, output_dir, args,
+                                sync_state, failed, drm_flagged)
+            elif not calibre_pairs:
+                print("\nNo books to process.")
+
 
         # Summary
         print(f"\n{'='*60}")
