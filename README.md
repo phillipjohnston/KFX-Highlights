@@ -99,9 +99,17 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --acce
 
 # Match ALL synced books, not just DRM-flagged ones
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --all-books
+
+# Update Calibre book paths in sync state (after library reorganization)
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch
+
+# Preview what paths would be updated without changing sync state
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch --dry-run
 ```
 
 By default, only DRM-flagged books are matched. Use `--all-books` to also include books that were already successfully processed from the Kindle — useful if you want to re-extract using the Calibre version instead.
+
+If you've reorganized your Calibre library (moved or renamed books), use `--rematch` to update the stored Calibre paths in `.sync_state.json` without reprocessing the books. Use `--dry-run` with `--rematch` to preview which paths would be updated before making changes. To prevent specific books from being rematched (e.g., if you've manually set a custom path), add `"rematch_disabled": true` to the book's record in `.sync_state.json`.
 
 The matching report shows four categories: ASIN-matched with a supported format (processable), matched but no supported format in Calibre, matched but no annotation file imported yet, and unmatched. You can set a persistent default in `config.yaml`:
 
@@ -156,6 +164,7 @@ Output goes to `output/`.
 | `--calibre-library PATH` | Match DRM books to unlocked Calibre library files |
 | `--accept-fuzzy` | Include fuzzy title matches in Calibre mode |
 | `--all-books` | Match all synced books to Calibre, not just DRM-flagged |
+| `--rematch` | Update Calibre book paths in sync state (requires `--calibre-library`) |
 | `--reprocess` | Reprocess previously successful books (bypass sync state skip logic) |
 | `--dry-run` | Preview what would be done without making changes |
 | `--limit N` | Process at most N books |

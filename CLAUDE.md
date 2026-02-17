@@ -70,9 +70,28 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --limi
 
 # Match ALL synced books (not just DRM-flagged) to Calibre files
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --all-books
+
+# Update Calibre book paths in sync state (after library reorganization)
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch
 ```
 
 Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin` in Calibre's `metadata.db`. Fuzzy title matching is available as a fallback for books without ASIN matches. Calibre files are used in-place (no copying). The `calibre_library` config key provides a persistent default. Use `--all-books` to include successfully processed books (not just DRM-flagged) in the matching.
+
+**Path updates**: If books have been moved or renamed in your Calibre library, use `--rematch` to update the stored paths in `.sync_state.json` without reprocessing. This queries the Calibre library again and updates the `calibre_kfx_path` for all matched books.
+
+To prevent specific books from being rematched (e.g., if you've manually set a custom Calibre path), add `"rematch_disabled": true` to the book's record in `.sync_state.json`:
+
+```json
+{
+  "books": {
+    "Book_Title_B000SEIBB8": {
+      "status": "success",
+      "calibre_kfx_path": "/custom/path/to/book.kfx",
+      "rematch_disabled": true
+    }
+  }
+}
+```
 
 ### Useful flags
 
@@ -92,6 +111,7 @@ Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin
 - `--calibre-library PATH` — Match DRM books to Calibre library files
 - `--accept-fuzzy` — Include fuzzy title matches in Calibre mode (default: ASIN-only)
 - `--all-books` — Match all synced books to Calibre, not just DRM-flagged (requires `--calibre-library`)
+- `--rematch` — Update Calibre book paths in sync state without reprocessing (requires `--calibre-library`)
 
 ### Re-exporting in a different format
 

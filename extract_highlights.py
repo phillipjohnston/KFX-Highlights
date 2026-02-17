@@ -951,7 +951,7 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
 
     matched, matched_no_kfx, unmatched, no_yjr = match_calibre_books(
         sync_state, calibre_path, script_dir,
-        all_books=args.all_books or args.reprocess)
+        all_books=args.all_books or args.reprocess or args.rematch)
 
     # Count candidate books for context
     books = sync_state.get("books", {})
@@ -1019,6 +1019,43 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
 
     if not to_process:
         print("\nNo books to process.")
+        return
+
+    # If --rematch mode, just update the sync state with new paths
+    if args.rematch:
+        print(f"\nUpdating Calibre paths in sync state for {len(to_process)} book(s)...")
+        updated = 0
+        skipped_disabled = 0
+        for m in to_process:
+            record = books.get(m["stem"], {})
+
+            # Skip if rematch is explicitly disabled for this book
+            if record.get("rematch_disabled"):
+                print(f"  Skipped (rematch disabled): {m['calibre_title']}")
+                skipped_disabled += 1
+                continue
+
+            old_path = record.get("calibre_kfx_path")
+            new_path = str(m["kfx_path"])
+
+            if old_path != new_path:
+                record["calibre_kfx_path"] = new_path
+                record["calibre_title"] = m["calibre_title"]
+                record["last_attempt"] = datetime.now(timezone.utc).isoformat()
+                books[m["stem"]] = record
+                updated += 1
+                print(f"  Updated: {m['calibre_title']}")
+                if old_path:
+                    print(f"    Old: {old_path}")
+                print(f"    New: {new_path}")
+            else:
+                print(f"  Unchanged: {m['calibre_title']}")
+
+        save_sync_state(script_dir, sync_state)
+        summary_parts = [f"{updated} path(s) updated", f"{len(to_process) - updated - skipped_disabled} unchanged"]
+        if skipped_disabled:
+            summary_parts.append(f"{skipped_disabled} skipped (rematch disabled)")
+        print(f"\nRematch complete: {', '.join(summary_parts)}")
         return
 
     # Apply --limit
@@ -1241,6 +1278,10 @@ name must start with the book stem (Kindle's default naming convention).""",
         "--reprocess", action="store_true",
         help="reprocess previously successful books (bypass sync state skip logic)",
     )
+    parser.add_argument(
+        "--rematch", action="store_true",
+        help="update Calibre book paths in sync state (useful after Calibre library reorganization)",
+    )
 
     script_dir = Path(__file__).parent
     config = load_config(script_dir)
@@ -1311,6 +1352,9 @@ name must start with the book stem (Kindle's default naming convention).""",
 
     if args.all_books and "--calibre-library" not in sys.argv:
         parser.error("--all-books requires --calibre-library")
+
+    if args.rematch and "--calibre-library" not in sys.argv:
+        parser.error("--rematch requires --calibre-library")
 
     # If one positional arg is given without the other, that's an error
     if (args.kfx_file is None) != (args.yjr_file is None):
