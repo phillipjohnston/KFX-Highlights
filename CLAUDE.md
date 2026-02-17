@@ -71,6 +71,9 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --limi
 # Match ALL synced books (not just DRM-flagged) to Calibre files
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --all-books
 
+# Re-process previously successful books (regenerate output files)
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --reprocess
+
 # Update Calibre book paths in sync state (after library reorganization)
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch
 
@@ -116,6 +119,7 @@ To prevent specific books from being rematched (e.g., if you've manually set a c
 - `--calibre-library PATH` — Match DRM books to Calibre library files
 - `--accept-fuzzy` — Include fuzzy title matches in Calibre mode (default: ASIN-only)
 - `--all-books` — Match all synced books to Calibre, not just DRM-flagged (requires `--calibre-library`)
+- `--reprocess` — Re-process previously successful books, bypassing sync state skip logic (requires `--calibre-library` or `--kindle`)
 - `--rematch` — Update Calibre book paths in sync state without reprocessing (requires `--calibre-library`)
 - `--missing-only` — Rematch only books whose Calibre files are missing (requires `--rematch`)
 
@@ -129,8 +133,11 @@ To regenerate in a different format:
   ```
   python extract_highlights.py -f md
   ```
-- **If using `--kindle` mode**: Either run bulk mode against `input/` (if files were imported), or delete `.sync_state.json` to force reprocessing.
-- **If using `--calibre-library` mode**: Same as above — use bulk mode or clear the sync state.
+- **If using `--kindle` mode**: Use `--reprocess` to bypass the sync state, or run bulk mode against `input/` if files were imported there.
+- **If using `--calibre-library` mode**: Use `--reprocess` to re-run all previously successful books:
+  ```
+  python extract_highlights.py --calibre-library -f md --reprocess
+  ```
 
 Note: `--skip-existing` (bulk mode only) checks for the output file matching the *current* format, so it won't skip books that only have HTML output when you request markdown.
 
