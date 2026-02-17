@@ -100,6 +100,12 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --acce
 # Match ALL synced books, not just DRM-flagged ones
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --all-books
 
+# Re-process all previously successful books (regenerate output files)
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --reprocess
+
+# Re-process only books whose output file is missing
+python extract_highlights.py --calibre-library "/path/to/Calibre Library" --reprocess-missing
+
 # Update Calibre book paths in sync state (after library reorganization)
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch
 
@@ -111,6 +117,20 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rema
 ```
 
 By default, only DRM-flagged books are matched. Use `--all-books` to also include books that were already successfully processed from the Kindle — useful if you want to re-extract using the Calibre version instead.
+
+#### Recovering missing output files
+
+If the sync state shows books as successfully processed but their output files are missing (e.g. after moving the `output/` directory), use `--reprocess-missing` to regenerate only those files without reprocessing everything:
+
+```bash
+# First, make sure annotation files are imported for all books on the Kindle
+python extract_highlights.py --kindle --import-metadata --reprocess
+
+# Then regenerate only the missing output files
+python extract_highlights.py --calibre-library --reprocess-missing
+```
+
+The `--reprocess` flag on `--import-metadata` is needed to include books already marked successful in the sync state — without it, those books would be skipped as unchanged.
 
 If you've reorganized your Calibre library (moved or renamed books), use `--rematch` to update the stored Calibre paths in `.sync_state.json` without reprocessing the books. Use `--missing-only` with `--rematch` to only update books whose stored Calibre file path no longer exists (marked with `"file_missing": true` in the sync state). Use `--dry-run` with `--rematch` to preview which paths would be updated before making changes. To prevent specific books from being rematched (e.g., if you've manually set a custom path), add `"rematch_disabled": true` to the book's record in `.sync_state.json`.
 
@@ -170,6 +190,7 @@ Output goes to `output/`.
 | `--rematch` | Update Calibre book paths in sync state (requires `--calibre-library`) |
 | `--missing-only` | Rematch only books whose Calibre files are missing (requires `--rematch`) |
 | `--reprocess` | Reprocess previously successful books (bypass sync state skip logic) |
+| `--reprocess-missing` | Reprocess only previously successful books whose output file is missing (requires `--calibre-library`) |
 | `--dry-run` | Preview what would be done without making changes |
 | `--limit N` | Process at most N books |
 
