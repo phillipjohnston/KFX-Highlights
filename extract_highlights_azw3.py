@@ -2,56 +2,80 @@
 """Extract highlight text from an AZW3 file using position data from annotation JSON.
 
 This script runs under Calibre's Python environment (via calibre-debug -e) to access
-Calibre's MOBI decompression libraries. It decompresses the KF8 HTML from the AZW3
-container, maps byte-offset annotation positions onto the decompressed content, and
-outputs intermediate JSON to stdout for the orchestrator to format.
+Calibre's MOBI decompression libraries and KindleUnpack's K8Processor for proper KF8
+skeleton/fragment/FDST processing.
 
-AZW3 annotation positions are raw byte offsets into the decompressed HTML, unlike KFX
-positions which use a "prefix:offset" format.
+AZW3 annotation positions are byte offsets into the KF8 "Flow 0" content (the assembled
+text after skeleton/fragment processing), NOT the raw decompressed HTML. We use
+KindleUnpack's K8Processor.buildParts() to reconstruct this representation.
 """
 
 import json
 import re
 import sys
+import os
 from html import unescape
 
 
-def decompress_azw3(azw3_path):
-    """Decompress all text records from an AZW3 file.
+def extract_flow0_content(azw3_path):
+    """Extract KF8 Flow 0 content from an AZW3 file using KindleUnpack's K8Processor.
 
-    Returns the concatenated decompressed HTML as bytes.
+    Returns the assembled text (Flow 0) as bytes, which is what annotation positions reference.
 
-    Uses Calibre's MobiReader for header parsing and HuffReader/PalmDoc
-    for decompression depending on the compression type.
+    This uses KindleUnpack's skeleton/fragment/FDST processing to reconstruct the proper
+    text representation, NOT just raw MOBI decompression.
     """
-    from calibre.ebooks.mobi.reader.mobi6 import MobiReader
+    # Add KindleUnpack to the path - add parent so relative imports work
+    kindleunpack_root = '/Users/phillip/src/KindleUnpack'
+    kindleunpack_lib = os.path.join(kindleunpack_root, 'lib')
+    if kindleunpack_root not in sys.path:
+        sys.path.insert(0, kindleunpack_root)
 
-    reader = MobiReader(azw3_path)
-    bh = reader.book_header
+    # Import from the lib package
+    from lib.mobi_header import MobiHeader
+    from lib.mobi_sectioner import Sectionizer
+    from lib.mobi_k8proc import K8Processor
 
-    # Build decompressor based on compression type
-    if bh.compression_type == b'DH':  # HUFF/CDIC
-        from calibre.ebooks.mobi.huffcdic import HuffReader
-        huff_sections = [reader.sections[bh.huff_offset + i][0]
-                         for i in range(bh.huff_number)]
-        huffr = HuffReader(huff_sections)
-        decompress = huffr.unpack
-    elif bh.compression_type == 2:  # PalmDoc LZ77
-        from calibre.ebooks.compression.palmdoc import decompress as palmdoc_decompress
-        decompress = palmdoc_decompress
-    else:  # No compression (type 1)
-        decompress = lambda x: x
+    # Create a minimal "files" object that K8Processor expects
+    class DummyFiles:
+        def __init__(self):
+            self.k8dir = '/tmp'
 
-    # Concatenate decompressed text records
-    parts = []
-    for i in range(1, bh.records + 1):
-        rec = reader.sections[i][0]
-        trail = reader.sizeof_trailing_entries(rec)
-        if trail:
-            rec = rec[:-trail]
-        parts.append(decompress(rec))
+    # Suppress KindleUnpack's print statements (they go to stdout/stderr and break JSON output)
+    import io
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
 
-    return b''.join(parts)
+    try:
+        # Parse the AZW3 file
+        sect = Sectionizer(azw3_path)
+        mh = MobiHeader(sect, 0)
+
+        # Check if this is a KF8 book
+        if not mh.isK8():
+            # Fall back to raw decompression for non-KF8 books
+            rawML = mh.getRawML()
+            return rawML
+
+        # Extract raw markup
+        rawML = mh.getRawML()
+
+        # Process through K8Processor to get Flow 0
+        files = DummyFiles()
+        k8proc = K8Processor(mh, sect, files, debug=False)
+        k8proc.buildParts(rawML)
+
+        # Assemble the parts into Flow 0 content
+        # (this is what annotation positions reference)
+        assembled_text = b''.join(k8proc.parts)
+
+        return assembled_text
+    finally:
+        # Restore stdout/stderr
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 
 def extract_metadata(azw3_path):
@@ -105,17 +129,76 @@ def extract_metadata(azw3_path):
     return title, authors, year
 
 
+def snap_to_tag_boundaries(all_html, start, end):
+    """Expand a byte range to avoid cutting mid-tag.
+
+    If start lands inside an HTML tag, move it forward past the '>'.
+    If end lands inside an HTML tag, move it backward before the '<'.
+    This ensures strip_html_tags() sees only complete tags.
+    """
+    # Check if start is inside a tag by scanning backward for '<' or '>'
+    # If we hit '<' before '>' going backwards, we're inside a tag
+    i = start
+    while i > 0:
+        i -= 1
+        if all_html[i:i+1] == b'>':
+            break  # start is outside a tag, no adjustment needed
+        if all_html[i:i+1] == b'<':
+            # We're inside a tag — advance start past the next '>'
+            gt = all_html.find(b'>', start)
+            if gt != -1:
+                start = gt + 1
+            break
+
+    # Check if end is inside a tag by scanning backward from end
+    j = end
+    while j > 0:
+        j -= 1
+        if all_html[j:j+1] == b'>':
+            break  # end is outside a tag
+        if all_html[j:j+1] == b'<':
+            # We're inside a tag — pull end back before the '<'
+            end = j
+            break
+
+    return all_html[start:end]
+
+
 def strip_html_tags(html_bytes):
     """Strip HTML tags from bytes, returning plain text.
 
     Handles tag removal and entity unescaping while preserving meaningful
     whitespace (paragraph/break boundaries become newlines).
+
+    Since byte-offset slicing can land mid-tag (e.g. '<span clas' at the
+    end or 'ss="foo">' at the start), we clean up partial tags at both
+    boundaries before processing.
     """
     text = html_bytes.decode('utf-8', errors='replace')
+
+    # Clean up partial tag at the start: if we start inside a tag,
+    # everything up to the first '>' is tag debris
+    if not text.startswith('<'):
+        gt_pos = text.find('>')
+        if gt_pos != -1:
+            # Check if there's a '<' before this '>' — if not, it's a partial tag
+            lt_pos = text.find('<')
+            if lt_pos == -1 or lt_pos > gt_pos:
+                text = text[gt_pos + 1:]
+
+    # Clean up partial tag at the end: if we end inside a tag,
+    # everything after the last '<' with no matching '>' is debris
+    last_lt = text.rfind('<')
+    if last_lt != -1:
+        last_gt = text.rfind('>')
+        if last_gt < last_lt:
+            # Unclosed tag at the end — remove it
+            text = text[:last_lt]
+
     # Replace block-level tags with newlines
     text = re.sub(r'<br\s*/?\s*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'</(p|div|h[1-6]|li|tr|blockquote)>', '\n', text, flags=re.IGNORECASE)
-    # Remove all remaining tags
+    # Remove all remaining complete tags
     text = re.sub(r'<[^>]+>', '', text)
     # Unescape HTML entities
     text = unescape(text)
@@ -181,8 +264,8 @@ def main():
         json.dump(result, sys.stdout, ensure_ascii=False)
         return
 
-    # Decompress book content
-    all_html = decompress_azw3(args.azw3_file)
+    # Extract KF8 Flow 0 content
+    all_html = extract_flow0_content(args.azw3_file)
 
     # Extract metadata
     title, authors, year = extract_metadata(args.azw3_file)
@@ -226,8 +309,9 @@ def main():
     # Extract highlight text
     items = []
     for start, end, ann in deduped:
-        # Slice the decompressed HTML at byte offsets
-        highlight_html = all_html[start:end]
+        # Slice the decompressed HTML at byte offsets, then expand
+        # to tag boundaries so we don't cut mid-tag
+        highlight_html = snap_to_tag_boundaries(all_html, start, end)
         text = strip_html_tags(highlight_html)
 
         if not text:

@@ -9,7 +9,7 @@ Extracts highlights and notes from Kindle books (KFX and AZW3 formats) using syn
 ## Supported Formats
 
 - **KFX**: `.kfx` book + `.yjr` annotation sidecar. Uses `kfxlib` for content decoding.
-- **AZW3**: `.azw3` book + `.azw3r`/`.azw3f` annotation sidecar. Uses Calibre's Python libraries (via `calibre-debug -e`) for decompression. AZW3 annotation positions are byte offsets into the decompressed KF8 HTML.
+- **AZW3**: `.azw3` book + `.azw3r`/`.azw3f` annotation sidecar. Uses Calibre's Python libraries (via `calibre-debug -e`) for MOBI decompression and KindleUnpack's K8Processor for skeleton/fragment/FDST processing. AZW3 annotation positions are byte offsets into the KF8 "Flow 0" content (assembled text after skeleton processing), not raw HTML.
 
 ## Workflow
 
@@ -128,7 +128,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-AZW3 support additionally requires [Calibre](https://calibre-ebook.com/) to be installed (uses `calibre-debug -e` for decompression).
+AZW3 support additionally requires:
+- [Calibre](https://calibre-ebook.com/) installed (uses `calibre-debug -e` for MOBI decompression)
+- [KindleUnpack](https://github.com/kevinhendricks/KindleUnpack) cloned at `/Users/phillip/src/KindleUnpack` (uses K8Processor for proper KF8 skeleton/fragment/FDST processing to extract Flow 0 content that matches annotation positions)
 
 ## Architecture
 
@@ -137,12 +139,13 @@ Four scripts form a pipeline:
 - **`extract_highlights.py`** — Entry point. Orchestrates the pipeline by calling `krds.py` then `extract_highlights_kfxlib.py` (for KFX) or `extract_highlights_azw3.py` (for AZW3) as subprocesses. Supports single-pair mode (explicit arguments) or bulk mode (scans `input/` for paired files).
 - **`krds.py`** — Third-party KRDS parser (GPL v3, by John Howell). Deserializes Kindle binary annotation files (`.yjr`, `.azw3f`, `.azw3r`, etc.) into JSON. Contains `KindleReaderDataStore` which handles the binary format, and `Deserializer` for low-level unpacking.
 - **`extract_highlights_kfxlib.py`** — KFX extraction logic. Uses the `kfxlib` library (from bundled `KFX Input.zip` or extracted `kfxlib_extracted/` directory) to decode KFX book content. Maps annotation positions from the JSON onto book content sections, resolves page numbers and TOC sections, and generates styled HTML or Markdown output.
-- **`extract_highlights_azw3.py`** — AZW3 extraction logic. Runs under Calibre's Python environment (via `calibre-debug -e`). Decompresses KF8 HTML from AZW3 using Calibre's `MobiReader` + `HuffReader`/PalmDoc, maps byte-offset annotation positions to text, and outputs intermediate JSON to stdout. The orchestrator handles formatting.
+- **`extract_highlights_azw3.py`** — AZW3 extraction logic. Runs under Calibre's Python environment (via `calibre-debug -e`). Uses Calibre's `MobiReader` for MOBI decompression and KindleUnpack's `K8Processor` to reconstruct KF8 Flow 0 content (via skeleton/fragment/FDST processing). Maps byte-offset annotation positions to this assembled text and outputs intermediate JSON to stdout. The orchestrator handles formatting.
 
 ## Key Dependencies
 
 - **kfxlib**: The KFX Input Calibre plugin library, loaded from `KFX Input.zip` (or `kfxlib_extracted/` if present). Provides `yj_book.YJ_Book` for KFX decoding, `IonSymbol`, and `YJFragment` for navigation parsing.
 - **Calibre** (for AZW3): Provides `calibre-debug -e` for running the AZW3 extractor with access to Calibre's MOBI decompression libraries.
+- **KindleUnpack** (for AZW3): Provides `K8Processor`, `MobiHeader`, and `Sectionizer` for proper KF8 skeleton/fragment/FDST processing to extract Flow 0 content.
 - Standard pip packages: `pillow`, `pypdf`, `lxml`, `beautifulsoup4` (required by kfxlib)
 
 ## File Conventions
