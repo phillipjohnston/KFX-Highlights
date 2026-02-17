@@ -499,8 +499,12 @@ def find_kindle_pairs(kindle_path):
     return pairs
 
 
-def filter_new_or_changed(pairs, sync_state):
-    """Filter out books where both files are unchanged and previously succeeded.
+def filter_new_or_changed(pairs, sync_state, metadata_only=False):
+    """Filter out books where files are unchanged and previously processed.
+
+    When metadata_only=True (--import-metadata mode), also skips books whose
+    annotation file is unchanged and previously imported as metadata-only. Only
+    the annotation mtime is checked in that case (no book file is copied).
 
     Returns (filtered_pairs, skipped_count).
     """
@@ -511,22 +515,36 @@ def filter_new_or_changed(pairs, sync_state):
     for book, ann in pairs:
         stem = book.stem
         record = books.get(stem)
-        if record and record.get("status") == "success":
+        if record:
+            status = record.get("status")
             try:
-                book_mtime = book.stat().st_mtime
                 ann_mtime = ann.stat().st_mtime
             except OSError:
                 filtered.append((book, ann))
                 continue
+
             # Use tolerance for mtime comparison — Kindle uses FAT32
             # (2-second resolution) while macOS uses APFS (nanoseconds),
             # and float precision can vary across JSON round-trips.
             # Note: sync state uses "kfx_mtime"/"yjr_mtime" field names
             # for historical reasons; they apply to any book/annotation format.
-            if (abs(book_mtime - record.get("kfx_mtime", 0)) < 2.0
-                    and abs(ann_mtime - record.get("yjr_mtime", 0)) < 2.0):
-                skipped += 1
-                continue
+            if status == "success":
+                try:
+                    book_mtime = book.stat().st_mtime
+                except OSError:
+                    filtered.append((book, ann))
+                    continue
+                if (abs(book_mtime - record.get("kfx_mtime", 0)) < 2.0
+                        and abs(ann_mtime - record.get("yjr_mtime", 0)) < 2.0):
+                    skipped += 1
+                    continue
+            elif metadata_only and status == "metadata-only":
+                # For --import-metadata, only the annotation file is copied;
+                # skip if it hasn't changed since the last import.
+                if abs(ann_mtime - record.get("yjr_mtime", 0)) < 2.0:
+                    skipped += 1
+                    continue
+
         filtered.append((book, ann))
 
     return filtered, skipped
@@ -1465,11 +1483,14 @@ name must start with the book stem (Kindle's default naming convention).""",
         for kfx, yjr in pairs:
             print(f"  {kfx.name}")
 
-        # Incremental sync: skip unchanged, previously successful books
+        # Incremental sync: skip unchanged, previously successful books.
+        # For --import-metadata, also skip books whose annotation file is unchanged
+        # and was previously imported (status "metadata-only").
         if args.reprocess:
             unchanged_count = 0
         else:
-            pairs, unchanged_count = filter_new_or_changed(pairs, sync_state)
+            pairs, unchanged_count = filter_new_or_changed(
+                pairs, sync_state, metadata_only=args.import_metadata)
 
         if unchanged_count:
             print(f"\n  Skipping {unchanged_count} unchanged, previously processed book(s)")
