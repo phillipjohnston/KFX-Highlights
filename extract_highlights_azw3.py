@@ -25,16 +25,16 @@ def extract_flow0_content(azw3_path):
     This uses KindleUnpack's skeleton/fragment/FDST processing to reconstruct the proper
     text representation, NOT just raw MOBI decompression.
     """
-    # Add KindleUnpack to the path - add parent so relative imports work
-    kindleunpack_root = '/Users/phillip/src/KindleUnpack'
-    kindleunpack_lib = os.path.join(kindleunpack_root, 'lib')
-    if kindleunpack_root not in sys.path:
-        sys.path.insert(0, kindleunpack_root)
+    # Add vendored KindleUnpack directory to the path
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    kindleunpack_dir = os.path.join(script_dir, 'KindleUnpack')
+    if kindleunpack_dir not in sys.path:
+        sys.path.insert(0, kindleunpack_dir)
 
-    # Import from the lib package
-    from lib.mobi_header import MobiHeader
-    from lib.mobi_sectioner import Sectionizer
-    from lib.mobi_k8proc import K8Processor
+    # Import KindleUnpack modules
+    from mobi_header import MobiHeader
+    from mobi_sectioner import Sectionizer
+    from mobi_k8proc import K8Processor
 
     # Create a minimal "files" object that K8Processor expects
     class DummyFiles:

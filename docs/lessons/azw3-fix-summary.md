@@ -25,8 +25,8 @@ Integrated KindleUnpack's `K8Processor` to properly reconstruct KF8 "Flow 0" con
    - Suppress KindleUnpack's print statements to avoid breaking JSON output
 
 2. **Dependencies**:
-   - Requires KindleUnpack cloned at `/Users/phillip/src/KindleUnpack`
-   - Uses KindleUnpack's lib package for K8 processing
+   - Vendored KindleUnpack modules in `KindleUnpack/` directory (GPL-3.0 licensed)
+   - Uses KindleUnpack's K8Processor, MobiHeader, and Sectionizer classes
 
 3. **Documentation**:
    - Updated CLAUDE.md to document KindleUnpack dependency

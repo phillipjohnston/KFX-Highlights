@@ -128,9 +128,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-AZW3 support additionally requires:
-- [Calibre](https://calibre-ebook.com/) installed (uses `calibre-debug -e` for MOBI decompression)
-- [KindleUnpack](https://github.com/kevinhendricks/KindleUnpack) cloned at `/Users/phillip/src/KindleUnpack` (uses K8Processor for proper KF8 skeleton/fragment/FDST processing to extract Flow 0 content that matches annotation positions)
+AZW3 support additionally requires [Calibre](https://calibre-ebook.com/) installed (uses `calibre-debug -e` for MOBI decompression). KindleUnpack modules for KF8 processing are vendored in the `KindleUnpack/` directory.
 
 ## Architecture
 
@@ -145,7 +143,7 @@ Four scripts form a pipeline:
 
 - **kfxlib**: The KFX Input Calibre plugin library, loaded from `KFX Input.zip` (or `kfxlib_extracted/` if present). Provides `yj_book.YJ_Book` for KFX decoding, `IonSymbol`, and `YJFragment` for navigation parsing.
 - **Calibre** (for AZW3): Provides `calibre-debug -e` for running the AZW3 extractor with access to Calibre's MOBI decompression libraries.
-- **KindleUnpack** (for AZW3): Provides `K8Processor`, `MobiHeader`, and `Sectionizer` for proper KF8 skeleton/fragment/FDST processing to extract Flow 0 content.
+- **KindleUnpack** (for AZW3): Vendored in `KindleUnpack/` directory. Provides `K8Processor`, `MobiHeader`, and `Sectionizer` for proper KF8 skeleton/fragment/FDST processing to extract Flow 0 content. Licensed under GPL-3.0.
 - Standard pip packages: `pillow`, `pypdf`, `lxml`, `beautifulsoup4` (required by kfxlib)
 
 ## File Conventions
