@@ -125,9 +125,12 @@ _ASIN_RE = re.compile(r'_([A-Z0-9]{10,})$')
 
 # Book file extensions and their annotation sidecar extensions (in preference order).
 # For AZW3, .azw3r (highlights) is preferred over .azw3f (bookmarks/reading state).
+# For MOBI6/.AZW, .mbp1 is the highlights sidecar; .mbs is an older fallback.
 _BOOK_FORMATS = {
     ".kfx": [".yjr"],
     ".azw3": [".azw3r", ".azw3f"],
+    ".mobi": [".mbp1", ".mbs"],
+    ".azw": [".mbp1", ".mbs"],
 }
 
 
@@ -192,6 +195,11 @@ def _count_annotations(json_file):
 def _is_azw3(book_file):
     """Check if a book file is AZW3 format (vs KFX)."""
     return Path(book_file).suffix.lower() == ".azw3"
+
+
+def _is_mobi(book_file):
+    """Check if a book file is MOBI6 or AZW (non-KF8) format."""
+    return Path(book_file).suffix.lower() in (".mobi", ".azw")
 
 
 def _format_azw3_output(result_json, book_file, output_dir, fmt, title=None, quiet=False):
@@ -385,6 +393,36 @@ def process_pair(book_file, annotation_file, script_dir, output_dir, quiet=False
                     n_highlights, n_notes = nh, nn
                 except (json.JSONDecodeError, KeyError) as e:
                     print(f"Warning: failed to parse AZW3 extraction output: {e}",
+                          file=sys.stderr)
+        else:
+            if "DRM" in (result.stderr or ""):
+                if result.stderr:
+                    print(result.stderr, end="", file=sys.stderr)
+                raise DRMError(f"DRM-protected: {book_file.name}",
+                               highlights=raw_highlights, notes=raw_notes)
+            if result.stderr:
+                print(result.stderr, end="", file=sys.stderr)
+            raise subprocess.CalledProcessError(result.returncode, extract_cmd)
+    elif _is_mobi(book_file):
+        # MOBI6 / AZW path: use extract_highlights_mobi.py (runs under sys.executable)
+        mobi_script = script_dir / "extract_highlights_mobi.py"
+        extract_cmd = [sys.executable, str(mobi_script),
+                       str(json_file), str(book_file)]
+        if title:
+            extract_cmd.extend(["--title", title])
+
+        result = subprocess.run(extract_cmd, capture_output=True, text=True)
+        n_highlights, n_notes = raw_highlights, raw_notes
+
+        if result.returncode == 0:
+            if result.stdout:
+                try:
+                    nh, nn = _format_azw3_output(
+                        result.stdout, book_file, output_dir, fmt,
+                        title=title, quiet=quiet)
+                    n_highlights, n_notes = nh, nn
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"Warning: failed to parse MOBI extraction output: {e}",
                           file=sys.stderr)
         else:
             if "DRM" in (result.stderr or ""):
@@ -697,18 +735,18 @@ def build_calibre_index(calibre_path):
             WHERE i.type = 'mobi-asin'
         """).fetchall()
 
-        # All KFX/KFX-ZIP/AZW3 format entries
+        # All KFX/KFX-ZIP/AZW3/MOBI/AZW format entries
         book_rows = conn.execute("""
             SELECT d.book, d.format, d.name, b.title, b.path
             FROM data d
             JOIN books b ON b.id = d.book
-            WHERE d.format IN ('KFX', 'KFX-ZIP', 'AZW3')
+            WHERE d.format IN ('KFX', 'KFX-ZIP', 'AZW3', 'MOBI', 'AZW')
         """).fetchall()
     finally:
         conn.close()
 
-    # Format preference: KFX > KFX-ZIP > AZW3
-    _FORMAT_PRIORITY = {"KFX": 0, "KFX-ZIP": 1, "AZW3": 2}
+    # Format preference: KFX > KFX-ZIP > AZW3 > MOBI > AZW
+    _FORMAT_PRIORITY = {"KFX": 0, "KFX-ZIP": 1, "AZW3": 2, "MOBI": 3, "AZW": 4}
 
     # Build book lookup: book_id -> {format, book_path, title}
     books_by_id = {}
@@ -722,7 +760,8 @@ def build_calibre_index(calibre_path):
             if new_priority >= existing_priority:
                 continue
 
-        ext_map = {"KFX": ".kfx", "KFX-ZIP": ".kfx-zip", "AZW3": ".azw3"}
+        ext_map = {"KFX": ".kfx", "KFX-ZIP": ".kfx-zip", "AZW3": ".azw3",
+                   "MOBI": ".mobi", "AZW": ".azw"}
         ext = ext_map.get(fmt, f".{fmt.lower()}")
         # Calibre stores files as: library/Author/Title (ID)/name.ext
         # The 'name' column from the data table is the actual filename stem
@@ -825,7 +864,7 @@ def find_annotation_for_stem(stem, sync_state, script_dir):
 
     Returns Path or None.
     """
-    all_ann_exts = [".yjr", ".azw3r", ".azw3f"]
+    all_ann_exts = [".yjr", ".azw3r", ".azw3f", ".mbp1", ".mbs"]
 
     books = sync_state.get("books", {})
     record = books.get(stem, {})
@@ -1014,7 +1053,7 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
             print(f"    -> {m['calibre_title']} (score: {m['score']:.0%})")
 
     if matched_no_kfx:
-        print(f"\nMatched but no supported format (KFX/AZW3): {len(matched_no_kfx)}")
+        print(f"\nMatched but no supported format (KFX/AZW3/MOBI): {len(matched_no_kfx)}")
         if not args.quiet:
             for m in matched_no_kfx:
                 print(f"  {m['stem']}")
