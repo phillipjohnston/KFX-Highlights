@@ -5,3 +5,5 @@ config.yaml
 .DS_Store
 __pycache__
 styles.css
+.venv
+venv
