@@ -222,7 +222,7 @@ def resolve_one(html, req):
         images = images_in(html, start, end)
 
     result = {"id": req["id"], "ok": True, "start": start, "end": end,
-              "text": text, "images": images}
+              "text": text, "images": images, "extent": len(html)}
     if len(text) > MAX_SPAN_CHARS:
         result["reason"] = ("span is %d chars (cap %d)"
                             % (len(text), MAX_SPAN_CHARS))
