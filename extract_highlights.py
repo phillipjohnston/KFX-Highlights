@@ -537,6 +537,23 @@ def find_kindle_pairs(kindle_path):
     return pairs
 
 
+def _mtimes_match(a, b):
+    """Compare file mtimes, tolerating FAT32 resolution and DST shifts.
+
+    Kindle uses FAT32 (2-second resolution) while macOS uses APFS
+    (nanoseconds), and float precision can vary across JSON round-trips.
+    FAT32 also stores local time, so the same unchanged file reports an
+    mtime shifted by exactly one hour across a DST transition.
+    """
+    delta = abs(a - b)
+    return delta < 2.0 or abs(delta - 3600) < 2.0
+
+
+def _mtime_newer(current, baseline):
+    """True if current is meaningfully newer than baseline (see _mtimes_match)."""
+    return current > baseline and not _mtimes_match(current, baseline)
+
+
 def filter_new_or_changed(pairs, sync_state, metadata_only=False):
     """Filter out books where files are unchanged and previously processed.
 
@@ -561,9 +578,6 @@ def filter_new_or_changed(pairs, sync_state, metadata_only=False):
                 filtered.append((book, ann))
                 continue
 
-            # Use tolerance for mtime comparison — Kindle uses FAT32
-            # (2-second resolution) while macOS uses APFS (nanoseconds),
-            # and float precision can vary across JSON round-trips.
             # Note: sync state uses "kfx_mtime"/"yjr_mtime" field names
             # for historical reasons; they apply to any book/annotation format.
             if status == "success":
@@ -572,14 +586,14 @@ def filter_new_or_changed(pairs, sync_state, metadata_only=False):
                 except OSError:
                     filtered.append((book, ann))
                     continue
-                if (abs(book_mtime - record.get("kfx_mtime", 0)) < 2.0
-                        and abs(ann_mtime - record.get("yjr_mtime", 0)) < 2.0):
+                if (_mtimes_match(book_mtime, record.get("kfx_mtime", 0))
+                        and _mtimes_match(ann_mtime, record.get("yjr_mtime", 0))):
                     skipped += 1
                     continue
             elif metadata_only and status == "metadata-only":
                 # For --import-metadata, only the annotation file is copied;
                 # skip if it hasn't changed since the last import.
-                if abs(ann_mtime - record.get("yjr_mtime", 0)) < 2.0:
+                if _mtimes_match(ann_mtime, record.get("yjr_mtime", 0)):
                     skipped += 1
                     continue
 
@@ -894,11 +908,66 @@ def find_annotation_for_stem(stem, sync_state, script_dir):
     return None
 
 
-def match_calibre_books(sync_state, calibre_path, script_dir, all_books=False):
+def find_changed_calibre_books(sync_state, script_dir):
+    """Find successful Calibre-sourced books whose inputs changed since last run.
+
+    A book is considered changed when its annotation file (as located by
+    find_annotation_for_stem) or its Calibre book file is *newer* than the
+    mtime recorded at the last successful extraction. Only newer counts:
+    an older file (e.g. a stale input/pending/ copy after Kindle mode has
+    already processed a fresher on-device sidecar) must not overwrite
+    newer output.
+
+    The annotation baseline is the larger of "calibre_ann_mtime" (recorded
+    by Calibre-path extractions) and "yjr_mtime" (recorded by Kindle mode
+    and --import-metadata; copy2 preserves mtime, so local copies match).
+
+    Returns a set of stems.
+    """
+    changed = set()
+    for stem, record in sync_state.get("books", {}).items():
+        if record.get("status") != "success" or not record.get("calibre_kfx_path"):
+            continue
+
+        ann = find_annotation_for_stem(stem, sync_state, script_dir)
+        if ann:
+            baseline = max(record.get("calibre_ann_mtime", 0),
+                           record.get("yjr_mtime", 0))
+            try:
+                if _mtime_newer(ann.stat().st_mtime, baseline):
+                    changed.add(stem)
+                    continue
+            except OSError:
+                pass
+
+        book_baseline = record.get("calibre_book_mtime")
+        if book_baseline is not None:
+            try:
+                book_mtime = Path(record["calibre_kfx_path"]).stat().st_mtime
+                if _mtime_newer(book_mtime, book_baseline):
+                    changed.add(stem)
+            except OSError:
+                pass
+
+    return changed
+
+
+def _record_calibre_mtimes(record, book_path, ann_path):
+    """Record the input mtimes used for a successful Calibre-path extraction."""
+    try:
+        record["calibre_book_mtime"] = Path(book_path).stat().st_mtime
+        record["calibre_ann_mtime"] = Path(ann_path).stat().st_mtime
+    except OSError:
+        pass
+
+
+def match_calibre_books(sync_state, calibre_path, script_dir, all_books=False,
+                        extra_stems=None):
     """Match books from sync state to Calibre library entries.
 
-    By default, only considers DRM-flagged/metadata-only books. When
-    all_books=True, also includes successfully processed books so they
+    By default, only considers DRM-flagged/metadata-only books, plus any
+    stems in extra_stems (e.g. successful books with changed annotations).
+    When all_books=True, also includes successfully processed books so they
     can be remapped to Calibre KFX files.
 
     Returns (matched, matched_no_kfx, unmatched, no_yjr) where:
@@ -916,9 +985,11 @@ def match_calibre_books(sync_state, calibre_path, script_dir, all_books=False):
         candidate_books = {stem: record for stem, record in books.items()
                           if record.get("status") in eligible_statuses}
     else:
+        extra_stems = extra_stems or set()
         candidate_books = {stem: record for stem, record in books.items()
                           if record.get("status") in {"drm-flagged",
-                                                       "metadata-only"}}
+                                                       "metadata-only"}
+                          or stem in extra_stems}
 
     matched = []
     matched_no_kfx = []
@@ -1006,13 +1077,20 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
         print(f"Error: Calibre library not found: {calibre_path}")
         sys.exit(1)
 
+    include_all = args.all_books or args.reprocess or args.reprocess_missing
+    match_all = include_all or args.rematch
+
+    # Without a full-reprocess flag, also pick up previously successful books
+    # whose annotation (or Calibre book) file is newer than the last run.
+    changed_stems = set() if match_all else find_changed_calibre_books(
+        sync_state, script_dir)
+
     matched, matched_no_kfx, unmatched, no_yjr = match_calibre_books(
         sync_state, calibre_path, script_dir,
-        all_books=args.all_books or args.reprocess or args.reprocess_missing or args.rematch)
+        all_books=match_all, extra_stems=changed_stems)
 
     # Count candidate books for context
     books = sync_state.get("books", {})
-    include_all = args.all_books or args.reprocess or args.reprocess_missing
     if include_all:
         eligible_statuses = {"drm-flagged", "metadata-only", "success",
                              "imported", "failed"}
@@ -1036,7 +1114,8 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
             label = "--all-books"
         print(f"Eligible books in sync state: {candidate_count} ({label})\n")
     else:
-        print(f"DRM-flagged books in sync state: {candidate_count}\n")
+        print(f"DRM-flagged books in sync state: {candidate_count}")
+        print(f"Previously successful books with newer annotations: {len(changed_stems)}\n")
 
     print(f"ASIN-matched with KFX: {len(asin_matched)}")
     if not args.quiet:
@@ -1221,6 +1300,7 @@ def run_calibre_matching(args, script_dir, sync_state, output_dir):
             record["error"] = None
             record["calibre_kfx_path"] = str(m["kfx_path"])
             record["calibre_title"] = m["calibre_title"]
+            _record_calibre_mtimes(record, m["kfx_path"], m["yjr_path"])
             # Clear file_missing flag on success
             if "file_missing" in record:
                 del record["file_missing"]
@@ -1653,6 +1733,7 @@ name must start with the book stem (Kindle's default naming convention).""",
                             record["yjr_mtime"] = orig_yjr.stat().st_mtime
                         except OSError:
                             pass
+                        _record_calibre_mtimes(record, calibre_kfx, yjr)
                         if "file_missing" in record:
                             del record["file_missing"]
                         if nh is not None:

@@ -116,7 +116,7 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rema
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch --dry-run
 ```
 
-By default, only DRM-flagged books are matched. Use `--all-books` to also include books that were already successfully processed from the Kindle — useful if you want to re-extract using the Calibre version instead.
+By default, only DRM-flagged books are matched, plus previously successful books whose annotation file (or Calibre book file) is newer than at the last extraction — so re-running after `--kindle --import-metadata` picks up new highlights without `--reprocess`. Changed books have their output file regenerated in full. Use `--all-books` to also include books that were already successfully processed from the Kindle — useful if you want to re-extract using the Calibre version instead.
 
 #### Recovering missing output files
 

@@ -84,7 +84,7 @@ python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rema
 python extract_highlights.py --calibre-library "/path/to/Calibre Library" --rematch --missing-only
 ```
 
-Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin` in Calibre's `metadata.db`. Fuzzy title matching is available as a fallback for books without ASIN matches. Calibre files are used in-place (no copying). The `calibre_library` config key provides a persistent default. Use `--all-books` to include successfully processed books (not just DRM-flagged) in the matching.
+Matching uses the ASIN extracted from Kindle filenames, looked up via `mobi-asin` in Calibre's `metadata.db`. Fuzzy title matching is available as a fallback for books without ASIN matches. Calibre files are used in-place (no copying). Without `--reprocess`, Calibre mode also regenerates previously successful books whose annotation or Calibre book file is newer than at the last extraction (tracked via `calibre_ann_mtime`/`calibre_book_mtime`, falling back to `yjr_mtime`), so new highlights are picked up incrementally. Mtime comparisons tolerate FAT32's 2-second resolution and the exact 1-hour shift FAT32 local timestamps show across DST changes. The `calibre_library` config key provides a persistent default. Use `--all-books` to include successfully processed books (not just DRM-flagged) in the matching.
 
 **Path updates**: If books have been moved or renamed in your Calibre library, use `--rematch` to update the stored paths in `.sync_state.json` without reprocessing. This queries the Calibre library again and updates the `calibre_kfx_path` for all matched books. Use `--missing-only` with `--rematch` to only update books whose stored Calibre file path no longer exists.
 
