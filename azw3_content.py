@@ -45,10 +45,6 @@ PARA_RE = re.compile(rb"<p\b[^>]*>.*?</p>", re.IGNORECASE | re.DOTALL)
 DOC_RE = re.compile(rb"<html\b[^>]*>", re.IGNORECASE)
 IMG_SRC_RE = re.compile(rb'src="kindle:embed:([0-9A-Za-z]+)', re.IGNORECASE)
 
-# Refuse to emit a span larger than this; see readwise_extract.MAX_SPAN_CHARS.
-MAX_SPAN_CHARS = 8000
-
-
 def _norm(text):
     """Collapse to a comparison key: no tags, no whitespace, lowercase.
 
@@ -223,10 +219,7 @@ def resolve_one(html, req):
 
     result = {"id": req["id"], "ok": True, "start": start, "end": end,
               "text": text, "images": images, "extent": len(html)}
-    if len(text) > MAX_SPAN_CHARS:
-        result["reason"] = ("span is %d chars (cap %d)"
-                            % (len(text), MAX_SPAN_CHARS))
-    elif kind == "figure" and images:
+    if kind == "figure" and images:
         result["reason"] = "figure with image %s" % images[0]
     elif kind == "table":
         result["reason"] = "table element" if "<table" in str(html[start:end][:200]) else "table span"
